@@ -236,6 +236,9 @@ pub struct Window {
     pub urgent: bool,
     /// A modal dialog (xdg-dialog-v1): while it is up, focusing its parent focuses it.
     pub modal: bool,
+    /// A client asked to keep this window out of the saved session (the `NewmRestoreExclude`
+    /// request).
+    pub restore_excluded: bool,
 }
 
 impl Window {
@@ -1769,6 +1772,7 @@ impl Desktop {
         let b = w.rules.border.width;
         let mut layout = niri_ipc::WindowLayout {
             pos_in_scrolling_layout: None,
+            tiles: None,
             tile_size: rect.map_or((0., 0.), |r| {
                 (f64::from(r.w + 2 * b), f64::from(r.h + 2 * b))
             }),
@@ -1802,6 +1806,7 @@ impl Desktop {
                 .unwrap_or(0);
             layout.pos_in_scrolling_layout =
                 Some(((r.i - min_i + 1) as usize, (r.j - min_j + 1) as usize));
+            layout.tiles = Some((r.i, r.j, r.w, r.h));
             let (_, _, cw, ch) = self.cell(&o.canvas, r);
             layout.tile_size = (cw, ch);
         }

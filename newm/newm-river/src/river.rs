@@ -826,6 +826,33 @@ impl State {
         Ok(response)
     }
 
+    /// Answers a request about one window, named by its id: places it on given tiles of its
+    /// canvas, or keeps it out of the saved session.
+    fn newm_window_request(&mut self, request: Request) -> Reply {
+        match request {
+            Request::NewmPlaceWindow { id, tile, span } => {
+                if span.is_some_and(|(w, h)| w < 1 || h < 1) {
+                    return Err("bad span".into());
+                }
+                let r = self.desktop.place_window(id, tile, span, Instant::now())?;
+                self.wm.manage_dirty();
+                Ok(Response::NewmWindowTiles {
+                    id,
+                    tiles: (r.i, r.j, r.w, r.h),
+                })
+            }
+            Request::NewmRestoreExclude { id, exclude } => {
+                let w = self
+                    .desktop
+                    .window_mut(id)
+                    .ok_or_else(|| String::from("no such window"))?;
+                w.restore_excluded = exclude;
+                Ok(Response::Handled)
+            }
+            _ => Err("not a window request".into()),
+        }
+    }
+
     /// Sends every subscriber the live settings as they are now.
     fn send_options_changed(&mut self) {
         self.report_displays();
@@ -880,6 +907,13 @@ impl State {
                         | Request::NewmParkWindows
                 ) {
                     let _ = reply.send(self.newm_block_request(request));
+                    return;
+                }
+                if matches!(
+                    request,
+                    Request::NewmPlaceWindow { .. } | Request::NewmRestoreExclude { .. }
+                ) {
+                    let _ = reply.send(self.newm_window_request(request));
                     return;
                 }
                 let d = &self.desktop;

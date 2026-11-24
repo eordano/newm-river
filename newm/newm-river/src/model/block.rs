@@ -113,6 +113,42 @@ impl Desktop {
         true
     }
 
+    /// Places the grid window `id` on `tile` of its canvas with `span` ([`block::place_window`]):
+    /// windows on those tiles make room, as for a drop there. The tiles it holds then; one undo
+    /// takes the whole placement back. An error, with nothing changed, when there is no window
+    /// `id` or it is not on the grid (floating, fullscreen, or not placed yet).
+    pub fn place_window(
+        &mut self,
+        id: Id,
+        tile: (i32, i32),
+        span: Option<(i32, i32)>,
+        now: Instant,
+    ) -> Result<Tiles, String> {
+        let w = self.windows.get(&id).ok_or("no such window")?;
+        let out = w.output;
+        let on_grid = w.is_tiled()
+            && !w.fullscreen
+            && out
+                .and_then(|o| self.output(o))
+                .is_some_and(|o| o.canvas.rect(id).is_some());
+        if !on_grid {
+            return Err("the window is not on the grid".into());
+        }
+        let placed = self
+            .logged("place", out, Some(id), |c| {
+                block::place_window(c, id, tile, span)
+            })
+            .flatten()
+            .ok_or("the window is not on the grid")?;
+        if placed.changed() {
+            self.park = out.map(|o| (o, placed));
+        }
+        self.follow_canvas(out, now);
+        out.and_then(|o| self.output(o))
+            .and_then(|o| o.canvas.rect(id))
+            .ok_or_else(|| "the window is not on the grid".into())
+    }
+
     /// How many history steps one undo (or, with `redo`, one redo) on `out`'s canvas takes:
     /// the last park's while they are the last steps there ([`block::Park::steps`]).
     pub(super) fn park_steps(&self, out: Option<OutputId>, redo: bool) -> Option<usize> {
@@ -342,5 +378,133 @@ mod tests {
         assert_eq!((1..=4).map(|id| tiles(&d, id)).collect::<Vec<_>>(), before);
         d.act(Action::Redo, now);
         assert_eq!((1..=4).map(|id| tiles(&d, id)).collect::<Vec<_>>(), after);
+    }
+
+    fn row_of_three() -> (Desktop, Instant) {
+        let (mut d, now) = desktop();
+        d.restore(
+            None,
+            crate::placeholder::RestoreCanvas {
+                windows: vec![
+                    slot("a", Tiles::new(0, 0, 1, 1)),
+                    slot("b", Tiles::new(1, 0, 1, 1)),
+                    slot("c", Tiles::new(2, 0, 1, 1)),
+                ],
+                zoom: 0,
+                view: (0., 0.),
+                focus: Some(0),
+            },
+            Duration::from_secs(20),
+            now,
+        );
+        for (id, app) in [(1, "a"), (2, "b"), (3, "c")] {
+            open(&mut d, id, app, now);
+        }
+        (d, now)
+    }
+
+    fn all(d: &Desktop) -> Vec<Tiles> {
+        (1..=3).map(|id| tiles(d, id)).collect()
+    }
+
+    #[test]
+    fn a_placed_window_lands_on_taken_tiles_as_a_drop_there_does() {
+        let (mut d, now) = row_of_three();
+        let before = all(&d);
+        let focus = d.focus();
+        let mut dropped = d.output(1).unwrap().canvas.clone();
+        dropped.move_to(3, 0, 0);
+
+        let placed = d.place_window(3, (0, 0), None, now);
+        assert_eq!(
+            placed,
+            Ok(Tiles::new(0, 0, 1, 1)),
+            "it takes the tiles asked"
+        );
+        assert_ne!(
+            tiles(&d, 1),
+            before[0],
+            "the window that held them makes room"
+        );
+        let c = &d.output(1).unwrap().canvas;
+        c.check().unwrap();
+        for id in 1..=3 {
+            assert_eq!(
+                c.rect(id),
+                dropped.rect(id),
+                "as one Canvas::move_to arranges them"
+            );
+        }
+        assert_eq!(d.focus(), focus, "the focus stays");
+
+        d.act(Action::Undo, now);
+        assert_eq!(all(&d), before);
+        assert_eq!(d.place_window(3, (2, 0), None, now), Ok(before[2]));
+        assert_eq!(all(&d), before, "its own tiles change nothing");
+        assert_eq!(
+            d.place_window(99, (0, 0), None, now),
+            Err("no such window".into())
+        );
+    }
+
+    #[test]
+    fn a_placed_window_takes_its_span_and_undoes_in_one_step() {
+        let (mut d, now) = row_of_three();
+        let before = all(&d);
+        let placed = d.place_window(2, (5, 3), Some((2, 3)), now);
+        assert_eq!(placed, Ok(Tiles::new(5, 3, 2, 3)));
+        let after = all(&d);
+        d.act(Action::Undo, now);
+        assert_eq!(all(&d), before, "one undo takes the move and the span back");
+        d.act(Action::Redo, now);
+        assert_eq!(all(&d), after, "one redo places again");
+        assert_eq!(
+            d.place_window(2, (5, 3), Some((1, 1)), now),
+            Ok(Tiles::new(5, 3, 1, 1)),
+            "a span alone resizes in place"
+        );
+
+        let big = d.place_window(1, (0, 8), Some((500, 500)), now).unwrap();
+        let c = &d.output(1).unwrap().canvas;
+        c.check().unwrap();
+        assert_eq!((big.i, big.j), (0, 8));
+        assert!(
+            c.fits_at_1to1(big.w, big.h),
+            "no larger than the screen at 1:1"
+        );
+        assert!(!c.fits_at_1to1(big.w + 1, big.h) && !c.fits_at_1to1(big.w, big.h + 1));
+    }
+
+    #[test]
+    fn the_window_list_carries_tiles_and_a_floating_window_is_not_placed() {
+        let (mut d, now) = row_of_three();
+        for id in 1..=3 {
+            let r = tiles(&d, id);
+            let w = d.ipc_window(d.window(id).unwrap());
+            assert!(!w.is_floating);
+            assert_eq!(w.layout.tiles, Some((r.i, r.j, r.w, r.h)));
+            assert_eq!(w.workspace_id, Some(1), "the canvas is the output's");
+        }
+        d.place_window(2, (7, 5), None, now).unwrap();
+        let w = d.ipc_window(d.window(2).unwrap());
+        assert_eq!(
+            w.layout.tiles,
+            Some((7, 5, 1, 1)),
+            "the list follows a move"
+        );
+
+        let focus = d.focus().unwrap();
+        d.act(Action::ToggleWindowFloating, now);
+        let others: Vec<Id> = (1..=3).filter(|id| *id != focus).collect();
+        let before: Vec<Tiles> = others.iter().map(|&id| tiles(&d, id)).collect();
+        let w = d.ipc_window(d.window(focus).unwrap());
+        assert!(w.is_floating, "a floating window says so");
+        assert_eq!(w.layout.tiles, None, "and holds no tiles");
+        assert_eq!(
+            d.place_window(focus, (0, 0), None, now),
+            Err("the window is not on the grid".into())
+        );
+        let after: Vec<Tiles> = others.iter().map(|&id| tiles(&d, id)).collect();
+        assert_eq!(after, before, "a refused request moves nothing");
     }
 }

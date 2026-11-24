@@ -9,7 +9,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use newm_canvas::place::is_bridge;
-use newm_canvas::{Canvas, Id, Rect};
+use newm_canvas::{Canvas, Edge, Id, Rect};
 use niri_ipc::NewmBlockAnchor;
 
 /// The tiles a block keeps clear of every window at the `Nearest` anchor, and parked windows
@@ -127,9 +127,9 @@ pub fn make_room(blocks: &mut Vec<Block>) {
     }
 }
 
-/// The last park: the layout before it and after each window it moved, every window's tiles by
-/// id. While those layouts are the last steps of the canvas's history, one undo (or redo) takes
-/// all of them back (or does them again).
+/// The last park or window placement: the layout before it and after each of its steps, every
+/// window's tiles by id. While those layouts are the last steps of the canvas's history, one undo
+/// (or redo) takes all of them back (or does them again).
 #[derive(Debug)]
 pub struct Park {
     layouts: Vec<Vec<(Id, Rect)>>,
@@ -328,7 +328,53 @@ pub fn park(c: &mut Canvas) -> Option<Park> {
     })
 }
 
+/// Places window `id` with its top-left corner on `tile`, through one [`Canvas::move_to`] as a
+/// drop there by the pointer, then gives it `span` through [`Canvas::resize`] of its right and
+/// bottom edges: the move comes first, so no window moves where it leaves. A span below the
+/// window's minimum grows to it, and one past the screen at 1:1 shrinks to it. The focus stays.
+/// The steps undo as one, as a park's. None when `c` holds no such window.
+pub fn place_window(
+    c: &mut Canvas,
+    id: Id,
+    tile: (i32, i32),
+    span: Option<(i32, i32)>,
+) -> Option<Park> {
+    let r = c.rect(id)?;
+    let (mut w, mut h) = span.unwrap_or((r.w, r.h));
+    let (need_w, need_h) = c.window(id).map(|win| c.need(win.min_w, win.min_h))?;
+    w = w.max(need_w).max(1);
+    h = h.max(need_h).max(1);
+    while w > r.w && !c.fits_at_1to1(w, r.h) {
+        w -= 1;
+    }
+    while h > r.h && !c.fits_at_1to1(w, h) {
+        h -= 1;
+    }
+    let mut layouts = vec![snapshot(c)];
+    if (r.i, r.j) != tile && c.move_to(id, tile.0, tile.1) {
+        layouts.push(snapshot(c));
+    }
+    for (edge, target) in [(Edge::Right, w), (Edge::Bottom, h)] {
+        let now = c.rect(id).map_or(target, |r| match edge {
+            Edge::Right => r.w,
+            _ => r.h,
+        });
+        if target != now && c.resize(id, edge, target - now) {
+            layouts.push(snapshot(c));
+        }
+    }
+    Some(Park {
+        layouts,
+        undone: false,
+    })
+}
+
 impl Park {
+    /// Whether any step changed the canvas.
+    pub fn changed(&self) -> bool {
+        self.layouts.len() > 1
+    }
+
     /// How many history steps of `c` one undo (or, with `redo`, one redo) takes: all of the
     /// park's while they are the last steps of the history, checked on a copy of `c`; none
     /// otherwise, when it takes one.

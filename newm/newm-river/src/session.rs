@@ -549,9 +549,10 @@ pub fn excluded(app_id: &str, patterns: &[RegexEq]) -> bool {
 }
 
 /// The window's app ID, title and process, when it is saved: a toplevel with an app ID, not a
-/// dialog (those come back with their parent's app, or not at all), and not excluded.
+/// dialog (those come back with their parent's app, or not at all), and not excluded, by its
+/// app or by a client's `NewmRestoreExclude` request.
 fn found(w: &Window, exclude: &[RegexEq]) -> Option<Found> {
-    if w.parent.is_some() {
+    if w.parent.is_some() || w.restore_excluded {
         return None;
     }
     let app_id = w.app_id.clone().filter(|id| !id.is_empty())?;
@@ -1627,5 +1628,40 @@ mod tests {
             (f64::from(r.w + 40), f64::from(r.h)),
             "and the size grew"
         );
+    }
+
+    #[test]
+    fn a_window_a_client_excludes_is_not_saved() {
+        let now = Instant::now();
+        let mut d = Desktop::new(Settings::default(), Vec::new(), now);
+        d.add_output(1);
+        d.set_output_name(1, "DP-1".into());
+        d.set_output_area(1, Rect::new(0, 0, 1920, 1080));
+        for (id, app) in [(1, "foot"), (2, "mpv")] {
+            d.add_window(id);
+            d.window_mut(id).unwrap().app_id = Some(app.into());
+            d.manage(now);
+            for (id, size) in d.proposals() {
+                d.set_asked(id, size);
+                d.on_dimensions(id, size.0.max(300), size.1.max(200));
+            }
+        }
+        let saved = |d: &Desktop| {
+            let session = snapshot(d, &[], |w| Some(Relaunch::Process(command(&[&w.app_id]))));
+            let canvas = &session.canvases[0];
+            let mut apps: Vec<String> = canvas.windows.iter().map(|w| w.app_id.clone()).collect();
+            apps.extend(canvas.floating.iter().map(|w| w.app_id.clone()));
+            apps.sort_unstable();
+            (apps, session.launches.len())
+        };
+        assert_eq!(saved(&d), (vec!["foot".into(), "mpv".into()], 2));
+        d.window_mut(1).unwrap().restore_excluded = true;
+        assert_eq!(
+            saved(&d),
+            (vec!["mpv".into()], 1),
+            "neither the window nor its launch is saved"
+        );
+        d.window_mut(1).unwrap().restore_excluded = false;
+        assert_eq!(saved(&d).0, ["foot", "mpv"], "and the mark comes off");
     }
 }

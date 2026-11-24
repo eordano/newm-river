@@ -167,6 +167,28 @@ pub enum Request {
     /// of the view. The camera stays; one undo takes the move back.
     #[cfg(feature = "canvas")]
     NewmParkWindows,
+    /// Move a tiled window to given tiles of its canvas, as a drop there by the pointer does:
+    /// windows on those tiles make room. The reply is [`Response::NewmWindowTiles`].
+    #[cfg(feature = "canvas")]
+    NewmPlaceWindow {
+        /// The window's id, as [`Window::id`] gives it.
+        id: u64,
+        /// The tile the window's top-left corner goes to: column and row.
+        tile: (i32, i32),
+        /// The span to give the window first, in tiles: width and height. Left out, the window
+        /// keeps its span.
+        #[serde(default)]
+        span: Option<(i32, i32)>,
+    },
+    /// Keep a window out of the saved session, or put it back: an excluded window is not
+    /// saved, so the next login does not relaunch it. The mark lasts until the window closes.
+    #[cfg(feature = "canvas")]
+    NewmRestoreExclude {
+        /// The window's id, as [`Window::id`] gives it.
+        id: u64,
+        /// Whether the window stays out of the saved session.
+        exclude: bool,
+    },
 }
 
 /// Reply from niri to client.
@@ -240,6 +262,14 @@ pub enum Response {
         windows: Vec<Option<u64>>,
         /// Whether every slot has a window or was released.
         done: bool,
+    },
+    /// The tiles a window holds after [`Request::NewmPlaceWindow`].
+    #[cfg(feature = "canvas")]
+    NewmWindowTiles {
+        /// The window's id.
+        id: u64,
+        /// Its tiles on its canvas: column, row, width and height.
+        tiles: (i32, i32, i32, i32),
     },
 }
 
@@ -1652,6 +1682,13 @@ pub struct WindowLayout {
     /// column is at index 1. This is consistent with [`Action::FocusColumn`] and
     /// [`Action::FocusWindowInColumn`].
     pub pos_in_scrolling_layout: Option<(usize, usize)>,
+    /// Tiles a tiled window holds on its workspace's canvas: column, row, width and height.
+    ///
+    /// Columns grow to the right and rows grow down, from a tile (0, 0) that every window of the
+    /// canvas shares; they can be negative. A floating window has none.
+    #[cfg(feature = "canvas")]
+    #[serde(default)]
+    pub tiles: Option<(i32, i32, i32, i32)>,
     /// Size of the tile this window is in, including decorations like borders.
     pub tile_size: (f64, f64),
     /// Size of the window's visual geometry itself.

@@ -235,6 +235,28 @@ pub enum MsgCmd {
     },
     /// Move the active canvas's tiled windows together to just left of the view.
     NewmParkWindows,
+    /// Move a tiled window to given tiles of its canvas; windows on them make room.
+    NewmPlaceWindow {
+        /// The window's id, as `windows` lists it.
+        id: u64,
+        /// The column of the tile its top-left corner goes to.
+        #[arg(allow_negative_numbers = true)]
+        column: i32,
+        /// The row of that tile.
+        #[arg(allow_negative_numbers = true)]
+        row: i32,
+        /// The span to give it, in tiles: WIDTH HEIGHT. Without it the window keeps its span.
+        #[arg(num_args = 2, value_names = ["WIDTH", "HEIGHT"])]
+        span: Vec<i32>,
+    },
+    /// Keep a window out of the saved session (or, with `false`, put it back).
+    NewmRestoreExclude {
+        /// The window's id, as `windows` lists it.
+        id: u64,
+        /// Whether the window stays out of the saved session.
+        #[arg(default_value_t = true, action = clap::ArgAction::Set)]
+        exclude: bool,
+    },
 }
 
 impl MsgCmd {
@@ -263,6 +285,20 @@ impl MsgCmd {
             ),
             Self::NewmBlockStatus { id } => Request::NewmBlockStatus { id },
             Self::NewmParkWindows => Request::NewmParkWindows,
+            Self::NewmPlaceWindow {
+                id,
+                column,
+                row,
+                span,
+            } => Request::NewmPlaceWindow {
+                id,
+                tile: (column, row),
+                span: match span[..] {
+                    [w, h] => Some((w, h)),
+                    _ => None,
+                },
+            },
+            Self::NewmRestoreExclude { id, exclude } => Request::NewmRestoreExclude { id, exclude },
         })
     }
 }
@@ -388,5 +424,76 @@ mod tests {
             serde_json::to_value(status).unwrap(),
             serde_json::json!({"Ok": {"NewmBlockStatus": {"id": 4, "windows": [9, null], "done": false}}})
         );
+    }
+
+    #[test]
+    fn window_requests_parse_as_a_client_sends_them() {
+        let r: Request =
+            serde_json::from_str(r#"{"NewmPlaceWindow":{"id":42,"tile":[12,-3],"span":[8,6]}}"#)
+                .unwrap();
+        assert!(matches!(
+            r,
+            Request::NewmPlaceWindow {
+                id: 42,
+                tile: (12, -3),
+                span: Some((8, 6))
+            }
+        ));
+        let r: Request =
+            serde_json::from_str(r#"{"NewmPlaceWindow":{"id":42,"tile":[0,0]}}"#).unwrap();
+        assert!(matches!(r, Request::NewmPlaceWindow { span: None, .. }));
+        let placed: Reply = Ok(Response::NewmWindowTiles {
+            id: 42,
+            tiles: (12, -3, 8, 6),
+        });
+        assert_eq!(
+            serde_json::to_value(placed).unwrap(),
+            serde_json::json!({"Ok": {"NewmWindowTiles": {"id": 42, "tiles": [12, -3, 8, 6]}}})
+        );
+        let r: Request =
+            serde_json::from_str(r#"{"NewmRestoreExclude":{"id":42,"exclude":true}}"#).unwrap();
+        assert!(matches!(
+            r,
+            Request::NewmRestoreExclude {
+                id: 42,
+                exclude: true
+            }
+        ));
+
+        let cmd = MsgCmd::NewmPlaceWindow {
+            id: 7,
+            column: -2,
+            row: 5,
+            span: vec![3, 2],
+        };
+        assert!(matches!(
+            cmd.request(),
+            Ok(Request::NewmPlaceWindow {
+                id: 7,
+                tile: (-2, 5),
+                span: Some((3, 2))
+            })
+        ));
+        let cmd = MsgCmd::NewmPlaceWindow {
+            id: 7,
+            column: 0,
+            row: 0,
+            span: Vec::new(),
+        };
+        assert!(matches!(
+            cmd.request(),
+            Ok(Request::NewmPlaceWindow { span: None, .. })
+        ));
+        let cmd = MsgCmd::NewmRestoreExclude {
+            id: 7,
+            exclude: false,
+        };
+        assert!(matches!(
+            cmd.request(),
+            Ok(Request::NewmRestoreExclude {
+                id: 7,
+                exclude: false
+            })
+        ));
     }
 }
