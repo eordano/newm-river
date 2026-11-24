@@ -680,6 +680,32 @@ msg action undo
 until_true '[ "$(field e2e-b1 .layout.tile_pos_in_workspace_view[0])" = "$xb1" ]'
 ok "a block of two windows lands as one unit, reports both, focuses slot 1; the park undoes in one step"
 
+# Windows on tiles over IPC: the window list gives each tiled
+# window's tiles; a window placed by its id takes the tiles and the span asked; placed on tiles
+# another window holds, it takes them and that window makes room; one undo takes a placement
+# back; an unknown id is refused.
+tiles() { win "$1" | jq -c .layout.tiles; }
+[ "$(tiles e2e-b1)" = "[60,0,4,2]" ] && [ "$(tiles e2e-b2)" = "[64,0,4,2]" ] \
+    || fail "the window list's tiles: $(tiles e2e-b1) $(tiles e2e-b2)"
+[ "$(field e2e-b1 .is_floating)" = false ] || fail "e2e-b1 floats"
+b1=$(field e2e-b1 .id)
+placed=$(msg --json newm-place-window "$b1" 70 6 3 2) || fail "newm-place-window: $placed"
+[ "$(jq -c .tiles <<<"$placed")" = "[70,6,3,2]" ] || fail "the placement's reply: $placed"
+until_true '[ "$(tiles e2e-b1)" = "[70,6,3,2]" ]'
+[ "$(tiles e2e-b2)" = "[64,0,4,2]" ] || fail "a move to free tiles moved e2e-b2: $(tiles e2e-b2)"
+placed=$(msg --json newm-place-window "$b1" 64 0) || fail "newm-place-window on taken tiles: $placed"
+[ "$(jq -c .tiles <<<"$placed")" = "[64,0,3,2]" ] || fail "the reply on taken tiles: $placed"
+until_true '[ "$(tiles e2e-b2)" != "[64,0,4,2]" ]'
+jq -en --argjson a "$(tiles e2e-b1)" --argjson b "$(tiles e2e-b2)" \
+    '($a[0] + $a[2] <= $b[0]) or ($b[0] + $b[2] <= $a[0]) or ($a[1] + $a[3] <= $b[1]) or ($b[1] + $b[3] <= $a[1])' \
+    >/dev/null || fail "two windows on one tile: $(tiles e2e-b1) $(tiles e2e-b2)"
+msg action undo
+until_true '[ "$(tiles e2e-b1)" = "[70,6,3,2]" ] && [ "$(tiles e2e-b2)" = "[64,0,4,2]" ]'
+if refused=$(msg newm-place-window 999999 0 0 2>&1); then fail "an unknown window was placed"; fi
+echo "$refused" | grep -q "no such window" || fail "newm-place-window 999999: $refused"
+msg newm-restore-exclude "$b1" >/dev/null || fail "newm-restore-exclude"
+ok "the window list carries tiles; a window placed by id takes them, on taken tiles the other makes room; undo"
+
 # The exit confirmation: quit without skip-confirmation asks first, a framed
 # box with no text; Escape cancels, Enter quits.
 frame="$((ow / 2 - 156)),$((oh / 2 - 52))"

@@ -355,6 +355,18 @@ open r-2 --color 00ff00
 mapped r-2
 open r-skip --color 0000ff
 mapped r-skip
+# A window a client keeps out of the session (`NewmRestoreExclude`): saved like any other
+# until the request names it, then left out; an unknown id is refused.
+open r-held --color ff00ff
+mapped r-held
+until_true "[ -f $session ] && jq -e '[.canvases[].windows[].app_id] | index(\"r-held\")' $session >/dev/null" 100
+msg newm-restore-exclude "$(field r-held .id)" >/dev/null
+until_true "jq -e '[.canvases[].windows[].app_id] | sort == [\"r-1\", \"r-2\"]' $session >/dev/null" 100
+if refused=$(msg newm-restore-exclude 999999 2>&1); then fail "an unknown window was excluded"; fi
+echo "$refused" | grep -q "no such window" || fail "newm-restore-exclude 999999: $refused"
+msg action close-window --id "$(field r-held .id)" >/dev/null
+until_true '[ -z "$(win r-held)" ]'
+ok "a window a client excludes leaves the saved session; the others stay"
 # Swap r-1 with r-2 so the saved layout is not the one new windows open in. Where r-2 opened
 # follows the placement rules (beside r-1 where the view scrolls least: below it on 1280 px).
 msg action focus-window --id "$(field r-1 .id)" >/dev/null
@@ -366,7 +378,9 @@ else
     msg action swap-neighbour down >/dev/null
     until_true '[ "$(y r-1)" -gt "$(y r-2)" ]'
 fi
-until_true "[ -f $session ] && jq -e '[.canvases[].windows[].app_id] | sort == [\"r-1\", \"r-2\"]' $session >/dev/null" 100
+# The file must hold the layout after the swap: r-1 on the tiles the window list gives it.
+r1=$(win r-1 | jq -c .layout.tiles)
+until_true "[ -f $session ] && jq -e --argjson t '$r1' '([.canvases[].windows[].app_id] | sort == [\"r-1\", \"r-2\"]) and ([.canvases[].windows[] | select(.app_id == \"r-1\") | .rect] == [\$t])' $session >/dev/null" 100
 [ "$(stat -c %a "$session")" = 600 ] || fail "the session file is not private"
 before=$(windows | jq -c '[.[] | select(.app_id != "r-skip") | [.app_id, .layout.tile_pos_in_workspace_view, .layout.tile_size, .is_focused]] | sort')
 ok "the session is saved (0600) once it held, without restore-exclude apps"
@@ -388,7 +402,7 @@ nrv_pids() { # newm-river's processes under this river, the supervisor first
 }
 # Canvas tiles, not view-relative spots: the unsaved r-skip opens again as a new window, unfocused,
 # and the camera may scroll to show it.
-spots() { windows | jq -c '[.[] | select(.app_id != "r-skip") | [.app_id, .layout.pos_in_scrolling_layout, .layout.tile_size, .is_focused]] | sort'; }
+spots() { windows | jq -c '[.[] | select(.app_id != "r-skip") | [.app_id, .layout.tiles, .layout.tile_size, .is_focused]] | sort'; }
 before_spots=$(spots)
 mapfile -t pids < <(nrv_pids)
 [ "${#pids[@]}" = 2 ] || fail "expected newm-river's supervisor and window manager, got: ${pids[*]}"
