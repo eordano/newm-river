@@ -1,0 +1,43 @@
+[package]
+name = "newm-river"
+version.workspace = true
+description.workspace = true
+license.workspace = true
+edition.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+bitflags.workspace = true
+clap.workspace = true
+glow = "0.17.0"
+khronos-egl = { version = "6.0.0", features = ["dynamic"] }
+libc = "0.2.189"
+newm-canvas = { path = "../newm-canvas" }
+newm-kde = { path = "../newm-kde" }
+newm-synth = { path = "../newm-synth" }
+niri-config = { path = "../niri-config", features = ["canvas"] }
+niri-ipc = { path = "../niri-ipc", features = ["canvas", "clap"] }
+pipewire = "0.10.1"
+png = "0.18.1"
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+wayland-backend = { version = "0.3.12", features = ["client_system"] }
+wayland-client = "0.31.14"
+wayland-protocols = { version = "0.32.13", features = ["client", "staging", "unstable"] }
+wayland-egl = "0.32.11"
+wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
+wayland-scanner = "0.31.8"
+xkbcommon = "0.9.0"
+zbus = "6.2.1"
+
+[features]
+# Writes the usage log ($XDG_STATE_HOME/newm-river/usage.jsonl) for tuning placement; no default
+# build has it.
+telemetry = []
+
+[dev-dependencies]
+wayland-protocols = { version = "0.32.13", features = ["client", "unstable"] }
