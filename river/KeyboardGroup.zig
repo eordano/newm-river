@@ -309,14 +309,20 @@ fn handleKey(listener: *wl.Listener(*wlr.Keyboard.event.Key), event: *wlr.Keyboa
             server.wm.dirtyWindowing();
         }
         const modifiers = group.state.getModifiers();
-        if (group.seat.matchXkbBinding(xkb_keycode, modifiers, xkb_state)) |binding| {
+        // newm-river fork: a client inhibiting shortcuts gets the keys of inhibitable bindings.
+        const inhibited = server.newm_shortcuts.inhibits(group.seat);
+        if (group.seat.matchXkbBinding(xkb_keycode, modifiers, xkb_state)) |binding| match: {
+            if (inhibited and binding.newm_inhibitable) {
+                log.debug("xkb binding held back by a shortcuts inhibitor", .{});
+                break :match;
+            }
             log.debug("matched xkb binding", .{});
             group.seat.xkb_bindings_seat.ensure_next_key_eaten = false;
             break :blk .{
                 .binding = if (binding.sent_pressed) null else binding,
             };
         }
-        if (group.seat.xkb_bindings_seat.ensure_next_key_eaten) {
+        if (!inhibited and group.seat.xkb_bindings_seat.ensure_next_key_eaten) {
             // This approach for filtering out modifiers feels like a hack.
             // Open questions:
             // - Are there keycodes that should be considered a modifier which

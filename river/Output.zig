@@ -20,6 +20,7 @@ const util = @import("util.zig");
 
 const LayerShellOutput = @import("LayerShellOutput.zig");
 const LockSurface = @import("LockSurface.zig");
+const NewmScale = @import("NewmScale.zig");
 const SceneNodeData = @import("SceneNodeData.zig");
 const Window = @import("Window.zig");
 
@@ -170,6 +171,10 @@ scheduled: State,
 sent: State,
 link_sent: wl.list.Link,
 sent_wl_output: bool = false,
+/// newm: river could neither enable this output nor turn it off (the kernel console lit it, and
+/// its GPU cannot show river's buffers): it stays disabled_hard in river's state while wlroots
+/// has it on, and river leaves it out of every later modeset.
+newm_stuck_on: bool = false,
 /// Rendering state requested by the window manager.
 rendering_requested: RenderingState = .init,
 /// State applied to the wlr_output and rendered.
@@ -481,6 +486,9 @@ fn handleRequestState(listener: *wl.Listener(*wlr.Output.event.RequestState), ev
 fn handleFrame(listener: *wl.Listener(*wlr.Output), wlr_output: *wlr.Output) void {
     const output: *Output = @fieldParentPtr("frame", listener);
 
+    // newm-river fork: rescale scaled windows whose scene nodes changed outside NewmScale's hooks.
+    NewmScale.syncAll();
+
     // TODO this should probably be retried on failure
     output.renderAndCommit() catch |err| switch (err) {
         error.CommitFailed => log.err("output commit failed for {s}", .{wlr_output.name}),
@@ -491,6 +499,9 @@ fn handleFrame(listener: *wl.Listener(*wlr.Output), wlr_output: *wlr.Output) voi
 }
 
 fn renderAndCommit(output: *Output) !void {
+    // newm: river never set a mode on a stuck output (no swapchain size): rendering it would
+    // abort in wlr_swapchain_create.
+    if (output.newm_stuck_on) return;
     if (!output.scene_output.?.needsFrame()) return;
 
     const wlr_output = output.wlr_output.?;

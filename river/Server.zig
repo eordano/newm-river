@@ -11,6 +11,7 @@ const posix = std.posix;
 const wlr = @import("wlroots");
 const wayland = @import("wayland");
 const wl = wayland.server.wl;
+const newm = wayland.server.newm;
 const wp = wayland.server.wp;
 
 const util = @import("util.zig");
@@ -20,6 +21,14 @@ const InputManager = @import("InputManager.zig");
 const LayerShell = @import("LayerShell.zig");
 const LibinputConfig = @import("LibinputConfig.zig");
 const LockManager = @import("LockManager.zig");
+const NewmFx = @import("NewmFx.zig");
+const NewmInputResume = @import("NewmInputResume.zig");
+const NewmGestures = @import("NewmGestures.zig");
+const NewmRender = @import("NewmRender.zig");
+const NewmScreencast = @import("NewmScreencast.zig");
+const NewmShortcuts = @import("NewmShortcuts.zig");
+const NewmHints = @import("NewmHints.zig");
+const FakeInput = @import("FakeInput.zig");
 const Output = @import("Output.zig");
 const OutputManager = @import("OutputManager.zig");
 const Scene = @import("Scene.zig");
@@ -74,6 +83,8 @@ xdg_decoration_manager: *wlr.XdgDecorationManagerV1,
 xdg_activation: *wlr.XdgActivationV1,
 xdg_foreign_registry: *wlr.XdgForeignRegistry,
 xdg_foreign_v2: *wlr.XdgForeignV2,
+/// newm-river fork: kwindowsystem 6.31 (Spectacle) crashes without xdg-toplevel-tag-v1.
+xdg_toplevel_tag_manager: *wlr.XdgToplevelTagManagerV1,
 
 data_device_manager: *wlr.DataDeviceManager,
 primary_selection_manager: *wlr.PrimarySelectionDeviceManagerV1,
@@ -103,6 +114,12 @@ wm: WindowManager,
 xkb_bindings: XkbBindings,
 touch_gestures: TouchGestures,
 layer_shell: LayerShell,
+newm_render: NewmRender,
+newm_gestures: NewmGestures,
+newm_screencast: NewmScreencast,
+newm_shortcuts: NewmShortcuts,
+newm_hints: NewmHints,
+newm_fake_input: FakeInput,
 
 xwayland: if (build_options.xwayland) ?*wlr.Xwayland else void = if (build_options.xwayland) null,
 new_xsurface: if (build_options.xwayland) wl.Listener(*wlr.XwaylandSurface) else void =
@@ -112,6 +129,7 @@ renderer_lost: wl.Listener(void) = .init(handleRendererLost),
 new_xdg_toplevel: wl.Listener(*wlr.XdgToplevel) = .init(handleNewXdgToplevel),
 new_toplevel_decoration: wl.Listener(*wlr.XdgToplevelDecorationV1) = .init(handleNewToplevelDecoration),
 request_activate: wl.Listener(*wlr.XdgActivationV1.event.RequestActivate) = .init(handleRequestActivate),
+new_activation_token: wl.Listener(*wlr.XdgActivationTokenV1) = .init(handleNewActivationToken),
 request_set_cursor_shape: wl.Listener(*wlr.CursorShapeManagerV1.event.RequestSetShape) = .init(handleRequestSetCursorShape),
 toplevel_capture_request: wl.Listener(*wlr.ExtForeignToplevelImageCaptureSourceManagerV1.Request) = .init(handleToplevelCaptureRequest),
 new_capture_session: wl.Listener(*wlr.ExtImageCopyCaptureSessionV1) = .init(handleNewCaptureSession),
@@ -133,7 +151,11 @@ pub fn init(server: *Server, runtime_xwayland: bool) !void {
 
     var session: ?*wlr.Session = undefined;
     const backend = try wlr.Backend.autocreate(loop, &session);
-    const renderer = try wlr.Renderer.autocreate(backend);
+    // newm-river fork: scenefx's scene draws only with its own renderer (GLES2 over EGL).
+    const renderer = if (build_options.scenefx)
+        NewmFx.createRenderer(backend) orelse return error.RendererCreateFailed
+    else
+        try wlr.Renderer.autocreate(backend);
 
     const compositor = try wlr.Compositor.create(wl_server, 6, renderer);
 
@@ -170,6 +192,7 @@ pub fn init(server: *Server, runtime_xwayland: bool) !void {
         .xdg_activation = try wlr.XdgActivationV1.create(wl_server),
         .xdg_foreign_registry = xdg_foreign_registry,
         .xdg_foreign_v2 = try wlr.XdgForeignV2.create(wl_server, xdg_foreign_registry),
+        .xdg_toplevel_tag_manager = try wlr.XdgToplevelTagManagerV1.create(wl_server, 1),
 
         .data_device_manager = try wlr.DataDeviceManager.create(wl_server),
         .primary_selection_manager = try wlr.PrimarySelectionDeviceManagerV1.create(wl_server),
@@ -199,6 +222,12 @@ pub fn init(server: *Server, runtime_xwayland: bool) !void {
         .xkb_bindings = undefined,
         .touch_gestures = undefined,
         .layer_shell = undefined,
+        .newm_render = undefined,
+        .newm_gestures = undefined,
+        .newm_screencast = undefined,
+        .newm_shortcuts = undefined,
+        .newm_hints = undefined,
+        .newm_fake_input = undefined,
     };
 
     if (renderer.getTextureFormats(@backingInt(wlr.BufferCap.dmabuf)) != null) {
@@ -237,6 +266,12 @@ pub fn init(server: *Server, runtime_xwayland: bool) !void {
     try server.xkb_bindings.init();
     try server.touch_gestures.init();
     try server.layer_shell.init();
+    try server.newm_render.init();
+    try server.newm_gestures.init();
+    try server.newm_screencast.init();
+    try server.newm_shortcuts.init();
+    try server.newm_hints.init();
+    try server.newm_fake_input.init();
     try server.scene.init();
     try server.om.init();
     try server.input_manager.init();
@@ -249,9 +284,15 @@ pub fn init(server: *Server, runtime_xwayland: bool) !void {
     server.xdg_shell.events.new_toplevel.add(&server.new_xdg_toplevel);
     server.xdg_decoration_manager.events.new_toplevel_decoration.add(&server.new_toplevel_decoration);
     server.xdg_activation.events.request_activate.add(&server.request_activate);
+    server.xdg_activation.events.new_token.add(&server.new_activation_token);
+    // A 10 s activation-token timeout (wlroots' default is 30 s).
+    server.xdg_activation.token_timeout_msec = 10_000;
     server.cursor_shape_manager.events.request_set_shape.add(&server.request_set_cursor_shape);
     server.toplevel_capture_source_manager.events.new_request.add(&server.toplevel_capture_request);
     server.image_copy_capture_manager.events.new_session.add(&server.new_capture_session);
+
+    // newm-river fork: the first keystroke after a VT switch back with no input was lost.
+    if (server.session) |s| NewmInputResume.init(s);
 
     wl_server.setGlobalFilter(*Server, globalFilter, server);
 }
@@ -265,9 +306,11 @@ pub fn deinit(server: *Server) void {
     server.new_xdg_toplevel.link.remove();
     server.new_toplevel_decoration.link.remove();
     server.request_activate.link.remove();
+    server.new_activation_token.link.remove();
     server.request_set_cursor_shape.link.remove();
     server.toplevel_capture_request.link.remove();
     server.new_capture_session.link.remove();
+    if (server.session != null) NewmInputResume.deinit();
 
     server.input_manager.new_input.link.remove();
     server.om.new_output.link.remove();
@@ -312,6 +355,9 @@ fn globalFilter(client: *const wl.Client, global: *const wl.Global, server: *Ser
             }
         }
     }
+
+    // newm-river fork: org_kde_kwin_fake_input only for xdg-desktop-portal-kde, never sandboxed.
+    if (global == server.newm_fake_input.global) return server.newm_fake_input.allows(client);
 
     // User-configurable allow/block lists are TODO
     const allowed = server.allowlist(global);
@@ -365,6 +411,7 @@ fn allowlist(server: *Server, global: *const wl.Global) bool {
         global == server.xdg_activation.global or
         global == server.xdg_foreign_v2.exporter.global or
         global == server.xdg_foreign_v2.importer.global or
+        global == server.xdg_toplevel_tag_manager.global or
         global == server.data_device_manager.global or
         global == server.primary_selection_manager.global or
         global == server.tearing_control_manager.global or
@@ -376,7 +423,10 @@ fn allowlist(server: *Server, global: *const wl.Global) bool {
         global == server.input_manager.tablet_manager.global or
         global == server.input_manager.pointer_gestures.global or
         global == server.input_manager.transient_seat_manager.global or
-        global == server.idle_inhibit_manager.wlr_manager.global;
+        global == server.idle_inhibit_manager.wlr_manager.global or
+        global == server.newm_shortcuts.wlr_manager.global or
+        global == server.newm_hints.bell.global or
+        global == server.newm_hints.wm_dialog.global;
 }
 
 /// Returns true if the global is blocked for security contexts
@@ -387,6 +437,12 @@ fn blocklist(server: *Server, global: *const wl.Global) bool {
         global == server.layer_shell.wlr_shell.global or
         global == server.xkb_bindings.global or
         global == server.touch_gestures.global or
+        global == server.newm_render.global or
+        global == server.newm_gestures.global or
+        global == server.newm_shortcuts.global or
+        global == server.newm_hints.global or
+        server.newm_screencast.blocks(global) or
+        global == server.newm_fake_input.global or
         global == server.screencopy_manager.global or
         global == server.image_copy_capture_manager.global or
         global == server.output_image_capture_source_manager.global or
@@ -511,13 +567,45 @@ fn handleNewXwaylandSurface(_: *wl.Listener(*wlr.XwaylandSurface), xsurface: *wl
     }
 }
 
+/// newm-river: what a token's check at creation found (XdgActivationTokenV1.data points at one).
+var activation_token_fresh: u8 = 0;
+var activation_token_urgent_only: u8 = 0;
+
+/// Checks a client's new activation token: a token naming no seat or serial is urgency-only; one whose serial is no older than the
+/// seat's last keyboard or pointer enter was made by the client the user is using; an older
+/// one was made before the focus moved on and activates nothing.
+fn handleNewActivationToken(
+    _: *wl.Listener(*wlr.XdgActivationTokenV1),
+    token: *wlr.XdgActivationTokenV1,
+) void {
+    const wlr_seat = token.seat orelse {
+        token.data = &activation_token_urgent_only;
+        return;
+    };
+    const seat: *Seat = @ptrCast(@alignCast(wlr_seat.data));
+    token.data = if (seat.newmSerialFresh(token.serial)) @as(?*anyopaque, &activation_token_fresh) else null;
+}
+
 fn handleRequestActivate(
-    _: *wl.Listener(*wlr.XdgActivationV1.event.RequestActivate),
+    listener: *wl.Listener(*wlr.XdgActivationV1.event.RequestActivate),
     event: *wlr.XdgActivationV1.event.RequestActivate,
 ) void {
+    const server: *Server = @fieldParentPtr("request_activate", listener);
     const node_data = SceneNodeData.fromSurface(event.surface) orelse return;
     switch (node_data.data) {
-        .window => {}, // TODO support xdg-activation with a rwm extension protocol
+        .window => |window| {
+            const window_v1 = window.object orelse return;
+            const data = event.token.data;
+            const source: newm.RiverHintsV1.Source = if (data == @as(?*anyopaque, &activation_token_fresh))
+                .token
+            else if (data == @as(?*anyopaque, &activation_token_urgent_only))
+                .urgent_only
+            else {
+                log.debug("ignoring xdg-activation-v1 request with a stale token", .{});
+                return;
+            };
+            server.newm_hints.sendActivate(window_v1, source);
+        },
         else => |tag| {
             log.info("ignoring xdg-activation-v1 activate request of {s} surface", .{@tagName(tag)});
         },
@@ -586,9 +674,45 @@ const CaptureSession = struct {
 
     wlr_capture_session: *wlr.ExtImageCopyCaptureSessionV1,
     destroy: wl.Listener(void) = wl.Listener(void).init(handleSessionDestroy),
+    /// newm-river fork: damages the session's source shortly after the session starts.
+    refresh: ?*wl.EventSource = null,
+    refreshes: u8 = 0,
+
+    /// A source sends frames only when what it shows is damaged: wlroots' scene capture source
+    /// renders only new damage (and river keeps one per window), an output renders only when
+    /// something changed. A session whose first capture request came after the commit its start
+    /// caused got no first frame until the source changed (a second recording or screenshot of a
+    /// still window, xdg-desktop-portal-wlr on a still screen). Toggling the source's scene a few
+    /// times after the session starts damages all of it while that request waits.
+    const refresh_delays_ms = [_]u31{ 16, 100, 500 };
+
+    fn handleRefresh(session: *CaptureSession) c_int {
+        const node: ?*wlr.SceneNode = if (session.wlr_capture_session.source.toOutput() != null)
+            &server.scene.wlr_scene.tree.node
+        else blk: {
+            var it = server.wm.windows.iterator();
+            while (it.next()) |window| {
+                if (session.wlr_capture_session.source == window.capture_source) {
+                    break :blk &window.capture_scene.tree.node;
+                }
+            }
+            break :blk null;
+        };
+        if (node) |n| {
+            const enabled = n.enabled;
+            n.setEnabled(!enabled);
+            n.setEnabled(enabled);
+        }
+        session.refreshes += 1;
+        if (session.refreshes < refresh_delays_ms.len) {
+            if (session.refresh) |r| r.timerUpdate(refresh_delays_ms[session.refreshes]) catch {};
+        }
+        return 0;
+    }
 
     fn handleSessionDestroy(listener: *wl.Listener(void)) void {
         const session: *CaptureSession = @fieldParentPtr("destroy", listener);
+        if (session.refresh) |r| r.remove();
 
         if (session.wlr_capture_session.source.toOutput()) |wlr_output| {
             if (@as(?*Output, @ptrCast(@alignCast(wlr_output.data)))) |output| {
@@ -651,6 +775,9 @@ fn newCaptureSession(server: *Server, wlr_capture_session: *wlr.ExtImageCopyCapt
     };
 
     wlr_capture_session.events.destroy.add(&session.destroy);
+
+    session.refresh = server.wl_server.getEventLoop().addTimer(*CaptureSession, CaptureSession.handleRefresh, session) catch null;
+    if (session.refresh) |r| r.timerUpdate(CaptureSession.refresh_delays_ms[0]) catch {};
 
     server.wm.dirtyWindowing();
 }

@@ -81,6 +81,11 @@ pub fn create(
     shell_surface.node.init(.shell_surface);
     server.wm.rendering_requested.list.append(&shell_surface.node);
 
+    // newm-river: SceneNodeData.fromSurface finds a surface's node through surface.data, which
+    // only windows, lock and override-redirect surfaces set; without it an idle inhibitor on a
+    // shell surface was ignored and an input popup of one never placed.
+    surface.data = &tree.node;
+
     shell_surface_v1.setHandler(*ShellSurface, handleRequest, null, shell_surface);
 }
 
@@ -88,6 +93,7 @@ fn roleDestroy(wlr_surface: *wlr.Surface) callconv(.c) void {
     const shell_surface = fromWlrSurface(wlr_surface) orelse return;
 
     shell_surface.surface.unmap();
+    shell_surface.surface.data = null;
 
     shell_surface.node.makeInert();
     shell_surface.node.deinit();

@@ -18,12 +18,15 @@ const server = &@import("main.zig").server;
 const util = @import("util.zig");
 
 const Decoration = @import("Decoration.zig");
+const NewmFx = @import("NewmFx.zig");
+const NewmScale = @import("NewmScale.zig");
 const Output = @import("Output.zig");
 const Scene = @import("Scene.zig");
 const SceneNodeData = @import("SceneNodeData.zig");
 const Seat = @import("Seat.zig");
 const WmNode = @import("WmNode.zig");
 const XdgToplevel = @import("XdgToplevel.zig");
+const NewmHints = @import("NewmHints.zig");
 const XwaylandWindow = @import("XwaylandWindow.zig");
 
 const log = std.log.scoped(.wm);
@@ -243,6 +246,8 @@ wm_sent: struct {
     dimensions_hint: DimensionsHint = .{},
     decoration_hint: river.WindowV1.DecorationHint = .only_supports_csd,
     parent: ?Window.Ref = null,
+    /// newm-river fork: the modality last sent in newm_river_hints_v1.modal.
+    newm_modal: bool = false,
     capture_session_count: u32 = 0,
 } = .{},
 
@@ -273,11 +278,19 @@ rendering_sent: struct {
 /// Rendering state requested by the wm.
 rendering_requested: RenderingRequested = .init,
 
+/// newm-river fork: scale and opacity from newm_river_window_render_v1.
+newm: NewmScale = .{},
+
 /// The currently rendered position/dimensions of the window in the scene graph
 box: wlr.Box = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
 
 foreign_toplevel_handle: ?*wlr.ExtForeignToplevelHandleV1 = null,
 wlr_toplevel_handle: ?*wlr.ForeignToplevelHandleV1 = null,
+/// newm-river: a taskbar's activate request on wlr_toplevel_handle, passed to the window manager.
+newm_toplevel_activate: wl.Listener(*wlr.ForeignToplevelHandleV1.event.Activated) = .init(handleNewmToplevelActivate),
+/// newm-river: a taskbar's close request on wlr_toplevel_handle; closing needs no policy, so river
+/// asks the window to close itself as the window manager's close would.
+newm_toplevel_close: wl.Listener(*wlr.ForeignToplevelHandleV1) = .init(handleNewmToplevelClose),
 
 pub fn create(impl: Impl) error{OutOfMemory}!*Window {
     assert(impl != .destroying);
@@ -366,6 +379,7 @@ pub fn destroy(window: *Window) void {
     window.capture_scene.tree.node.destroy();
 
     window.node.deinit();
+    window.newm.deinit();
 
     server.wm.windows.remove(window.ref.key);
 
@@ -445,6 +459,8 @@ pub fn manageStart(window: *Window) void {
                 if (window.wlr_toplevel_handle == null) {
                     if (wlr.ForeignToplevelHandleV1.create(server.wlr_foreign_toplevel_manager)) |handle| {
                         window.wlr_toplevel_handle = handle;
+                        handle.events.request_activate.add(&window.newm_toplevel_activate);
+                        handle.events.request_close.add(&window.newm_toplevel_close);
                         if (window.getTitle()) |title| handle.setTitle(title);
                         if (window.getAppId()) |app_id| handle.setAppId(app_id);
                     } else |_| {
@@ -520,6 +536,12 @@ pub fn manageStart(window: *Window) void {
             } else if (sent.parent != null) {
                 window_v1.sendParent(null);
                 sent.parent = null;
+            }
+
+            const modal = window.newmModal();
+            if ((new and modal) or modal != sent.newm_modal) {
+                server.newm_hints.sendModal(window_v1, modal);
+                sent.newm_modal = modal;
             }
 
             if (new or scheduled.dirty_app_id) {
@@ -954,6 +976,7 @@ pub fn renderFinish(window: *Window) void {
     // TODO(wlroots) provide a way to batch changes to the scene graph.
     window.tree.node.setEnabled(false);
     window.popup_tree.node.setEnabled(false);
+    window.newm.renderStart(window);
 
     window.box.width = window.rendering_sent.width;
     window.box.height = window.rendering_sent.height;
@@ -1000,8 +1023,7 @@ pub fn renderFinish(window: *Window) void {
     // dimensions event is completed.
     // Keeping the nodes enabled while closing is necessary for frame perfection.
     const enabled = !requested.hidden and (window.state == .mapped or window.state == .closing);
-    window.tree.node.setEnabled(enabled);
-    window.popup_tree.node.setEnabled(enabled);
+    window.newm.renderFinish(window, enabled);
 }
 
 fn drawBorders(window: *Window) void {
@@ -1058,6 +1080,30 @@ fn drawBorders(window: *Window) void {
         if (border.edges.bottom) {
             left.height += border.width;
             right.height += border.width;
+        }
+        // newm-river fork: with rounded corners (newm_river_window_render_v1 v2) a border on all
+        // four edges is one rect around the window; scenefx rounds it and leaves the window's
+        // rounded content box undrawn (NewmFx.apply).
+        window.newm.fx.ring = false;
+        if (NewmFx.enabled and window.newm.current.corner_radius > 0 and border.width > 0 and
+            border.edges.left and border.edges.right and border.edges.top and border.edges.bottom and
+            requested.content_clip.empty())
+        {
+            const bw: i32 = border.width;
+            const ring: wlr.Box = .{
+                .x = -bw,
+                .y = -bw,
+                .width = content.width + 2 * bw,
+                .height = content.height + 2 * bw,
+            };
+            if (requested.clip.empty() or NewmFx.boxContains(requested.clip, ring)) {
+                window.newm.fx.ring = true;
+                const none: wlr.Box = .{ .x = 0, .y = 0, .width = 0, .height = 0 };
+                top = ring;
+                left = none;
+                right = none;
+                bottom = none;
+            }
         }
         inline for (.{
             .{ .name = "left", .box = &left },
@@ -1152,6 +1198,14 @@ pub fn destroyPopups(window: Window) void {
     }
 }
 
+/// newm-river fork: whether the window is a modal dialog (xdg-dialog-v1).
+pub fn newmModal(window: *const Window) bool {
+    return switch (window.impl) {
+        .toplevel => |toplevel| NewmHints.toplevelModal(toplevel.wlr_toplevel),
+        .xwayland, .destroying => false,
+    };
+}
+
 pub fn getParent(window: *Window) ?*Window {
     switch (window.impl) {
         .toplevel => |toplevel| {
@@ -1227,6 +1281,8 @@ pub fn unmap(window: *Window) void {
     }
 
     if (window.wlr_toplevel_handle) |handle| {
+        window.newm_toplevel_activate.link.remove();
+        window.newm_toplevel_close.link.remove();
         handle.destroy();
         window.wlr_toplevel_handle = null;
     }
@@ -1269,4 +1325,21 @@ pub fn notifyAppId(window: *Window) void {
     if (window.wlr_toplevel_handle) |handle| {
         if (window.getAppId()) |app_id| handle.setAppId(app_id);
     }
+}
+
+fn handleNewmToplevelClose(
+    listener: *wl.Listener(*wlr.ForeignToplevelHandleV1),
+    _: *wlr.ForeignToplevelHandleV1,
+) void {
+    const window: *Window = @fieldParentPtr("newm_toplevel_close", listener);
+    window.close();
+}
+
+fn handleNewmToplevelActivate(
+    listener: *wl.Listener(*wlr.ForeignToplevelHandleV1.event.Activated),
+    _: *wlr.ForeignToplevelHandleV1.event.Activated,
+) void {
+    const window: *Window = @fieldParentPtr("newm_toplevel_activate", listener);
+    const window_v1 = window.object orelse return;
+    server.newm_hints.sendActivate(window_v1, .foreign_toplevel);
 }

@@ -16,6 +16,7 @@ const Output = @import("Output.zig");
 const SceneNodeData = @import("SceneNodeData.zig");
 const SlotMap = @import("slotmap").SlotMap;
 const XdgPopup = @import("XdgPopup.zig");
+const NewmOpeningScale = @import("NewmOpeningScale.zig");
 
 const log = std.log.scoped(.wm);
 
@@ -151,7 +152,10 @@ fn handleCommit(listener: *wl.Listener(*wlr.Surface), _: *wlr.Surface) void {
 
     assert(wlr_layer_surface.output != null);
 
-    if (wlr_layer_surface.initial_commit) layer_surface.configurable = true;
+    if (wlr_layer_surface.initial_commit) {
+        layer_surface.configurable = true;
+        NewmOpeningScale.send(wlr_layer_surface.surface, wlr_layer_surface.output);
+    }
 
     // If the layer was changed, move the LayerSurface to the proper tree.
     if (wlr_layer_surface.current.committed.layer) {

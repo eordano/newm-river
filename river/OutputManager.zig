@@ -26,6 +26,10 @@ const log = std.log.scoped(.output);
 
 /// The very first modeset is different in that if it fails we exit river.
 first_modeset: bool = true,
+/// newm: modesets failed in a row; past two, a failure no longer schedules another manage
+/// sequence by itself, so an output that cannot be driven cannot spin river (a VT switch back
+/// once retried a failing modeset about 340 times a second).
+failed_modesets: u32 = 0,
 
 new_output: wl.Listener(*wlr.Output) = .init(handleNewOutput),
 
@@ -82,6 +86,7 @@ pub fn deinit(om: *OutputManager) void {
 
 fn handleNewOutput(_: *wl.Listener(*wlr.Output), wlr_output: *wlr.Output) void {
     log.debug("new output {s}", .{wlr_output.name});
+    server.om.failed_modesets = 0;
 
     Output.create(wlr_output) catch |err| {
         switch (err) {
@@ -129,6 +134,7 @@ fn handleManagerTest(_: *wl.Listener(*wlr.OutputConfigurationV1), config: *wlr.O
 
 fn handleManagerApply(_: *wl.Listener(*wlr.OutputConfigurationV1), config: *wlr.OutputConfigurationV1) void {
     log.info("applying output configuration", .{});
+    server.om.failed_modesets = 0;
 
     if (!validateConfigCoordinates(config)) {
         config.sendFailed();
@@ -284,7 +290,7 @@ pub fn commitOutputState(om: *OutputManager) void {
             const wlr_output = output.wlr_output orelse continue;
             switch (output.sent.state) {
                 .enabled => if (!wlr_output.enabled) break :blk true,
-                .disabled_soft, .disabled_hard => if (wlr_output.enabled) break :blk true,
+                .disabled_soft, .disabled_hard => if (wlr_output.enabled and !output.newm_stuck_on) break :blk true,
                 .destroying => unreachable,
             }
             switch (output.sent.mode) {
@@ -322,6 +328,7 @@ pub fn commitOutputState(om: *OutputManager) void {
             var it = wm.sent.outputs.iterator(.forward);
             while (it.next()) |output| {
                 const wlr_output = output.wlr_output orelse continue;
+                if (output.newm_stuck_on) continue;
                 const state = states.addOne(util.gpa) catch {
                     log.err("out of memory", .{});
                     return;
@@ -353,12 +360,35 @@ pub fn commitOutputState(om: *OutputManager) void {
             }
         }
 
+        for (states.items) |*state| {
+            // Unlike wlr_output_commit_state(), wlr_backend_commit() keeps fields that change
+            // nothing. When an output is enabled again the scene re-applies the gamma LUT, with
+            // no gamma client a reset to no color transform, and the DRM backend fails that
+            // silently on a CRTC without gamma support (virtio-gpu): DPMS on after off failed.
+            if (state.base.committed.color_transform and
+                state.base.color_transform == state.output.private.color_transform)
+            {
+                state.base.committed.color_transform = false;
+            }
+        }
+
         if (!server.backend.commit(states.items)) {
-            log.err("failed to commit new output configuration", .{});
-            om.modesetFailed();
-            return;
+            // newm: one output river cannot drive (a second GPU that cannot show river's
+            // buffers, a USB display adapter, a refused mode) made the first modeset fail and
+            // river exit, which ended the session at login; keep the outputs that work. The same
+            // holds for every modeset river schedules itself: wlroots destroys every output when
+            // the session goes inactive and makes new ones when it comes back, so a VT switch
+            // back is a new first modeset. Only a wlr-output-management client's configuration
+            // keeps its all-or-nothing answer.
+            const own = om.first_modeset or wm.sent.output_config == null;
+            if (!(own and om.commitUsableOutputs(states.items))) {
+                log.err("failed to commit new output configuration", .{});
+                om.modesetFailed();
+                return;
+            }
         }
         om.first_modeset = false;
+        om.failed_modesets = 0;
 
         swapchain_manager.apply();
     }
@@ -393,7 +423,7 @@ pub fn commitOutputState(om: *OutputManager) void {
                     wlr_output.scheduleFrame();
                 },
                 .disabled_soft, .disabled_hard => {
-                    assert(!wlr_output.enabled);
+                    assert(!wlr_output.enabled or output.newm_stuck_on);
                     output.lock_render_state = .blanked;
                     if (output.sent.state == .disabled_hard) {
                         output.link_sent.remove();
@@ -409,6 +439,48 @@ pub fn commitOutputState(om: *OutputManager) void {
     om.sendConfig() catch {
         log.err("out of memory", .{});
     };
+}
+
+/// newm: commits each output's state on its own, after the commit of all of them failed; an
+/// output whose commit fails stays off (logged), out of the layout, with no mode, so later
+/// manage sequences leave it alone. wlr_backend_test passes such an output (a second GPU's
+/// multi-GPU import fails only at commit), so only a commit finds it. Returns whether some
+/// output was enabled.
+fn commitUsableOutputs(om: *OutputManager, states: []wlr.Backend.OutputState) bool {
+    var enabled: usize = 0;
+    for (states, 0..) |*state, i| {
+        const enabling = state.base.committed.enabled and state.base.enabled;
+        const ok = server.backend.commit(states[i..][0..1]);
+        log.debug("modeset of {s} alone: {s}", .{ state.output.name, if (ok) "ok" else "failed" });
+        if (ok) {
+            if (enabling) enabled += 1;
+            continue;
+        }
+        const output: *Output = @ptrCast(@alignCast(state.output.data));
+        // The output may be lit already: wlroots reads a connector's CRTC at connect, and the
+        // kernel console lights it during a VT switch (or a crashed river left it on). Turn it
+        // off, so river's state matches the hardware (river asserts that a disabled_hard output
+        // is off: a VT switch back crashed it here).
+        if (state.output.enabled and !turnOff(state.output)) {
+            log.err("output {s} cannot be enabled by river nor turned off; river leaves it alone", .{state.output.name});
+            output.newm_stuck_on = true;
+        }
+        log.err("output {s} cannot be enabled (its GPU cannot show river's buffers, or its mode is refused); leaving it off", .{state.output.name});
+        om.output_layout.remove(state.output);
+        output.scheduled.state = .disabled_hard;
+        output.scheduled.mode = .none;
+        output.sent.state = .disabled_hard;
+        output.sent.mode = .none;
+    }
+    return enabled > 0;
+}
+
+/// newm: commits an output off on its own; returns whether it worked.
+fn turnOff(wlr_output: *wlr.Output) bool {
+    var off = [1]wlr.Backend.OutputState{.{ .output = wlr_output, .base = wlr.Output.State.init() }};
+    defer off[0].base.finish();
+    off[0].base.setEnabled(false);
+    return server.backend.commit(&off);
 }
 
 fn modesetFailed(om: *OutputManager) void {
@@ -436,7 +508,12 @@ fn modesetFailed(om: *OutputManager) void {
             output.scheduled = output.current;
             output.sent = output.current;
         }
-        wm.dirtyWindowing();
+        om.failed_modesets +|= 1;
+        if (om.failed_modesets <= 2) {
+            wm.dirtyWindowing();
+        } else if (om.failed_modesets == 3) {
+            log.err("output modesets keep failing; retrying only when something else changes", .{});
+        }
     }
 }
 
@@ -449,6 +526,13 @@ fn sendConfig(om: *OutputManager) !void {
     var it = om.outputs.iterator(.forward);
     while (it.next()) |output| {
         const wlr_output = output.wlr_output orelse continue;
+        // newm: a VT switch back crashed river here (a ReleaseSafe panic on this switch); name
+        // the output and skip it rather than end the session.
+        const raw = @backingInt(output.current.state);
+        if (raw > 2) {
+            log.err("output {s}: current state {d} with a wlr_output, not sent to output managers", .{ wlr_output.name, raw });
+            continue;
+        }
         const head = try wlr.OutputConfigurationV1.Head.create(config, wlr_output);
 
         // It's only necessary to overwrite the state that does not require a modeset.

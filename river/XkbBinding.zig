@@ -45,6 +45,11 @@ wm_requested: struct {
 /// events to be sent to the window manager.
 sent_pressed: bool = false,
 
+/// newm-river fork: whether an active keyboard shortcuts inhibitor on the focused surface keeps
+/// this binding from matching (NewmShortcuts.zig). The window manager clears it for bindings that
+/// must keep working, such as toggling the inhibitor or locking the session.
+newm_inhibitable: bool = true,
+
 /// Seat.xkb_bindings
 link: wl.list.Link,
 

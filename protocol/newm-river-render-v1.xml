@@ -1,0 +1,267 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="newm_river_render_v1">
+  <copyright>
+    SPDX-FileCopyrightText: © 2026 The newm-river contributors
+    SPDX-License-Identifier: MIT
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to
+    deal in the Software without restriction, including without limitation the
+    rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+    sell copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+    IN THE SOFTWARE.
+  </copyright>
+
+  <description summary="per-window rendering scale, opacity, corners and shadow">
+    This fork-only protocol (newm-river, a fork of river) lets the
+    river-window-management-v1 window manager draw a window scaled and
+    translucent without resizing it: a camera zoom, not a resize. The window
+    keeps its dimensions, its configures and its input region; only the way
+    river draws it changes.
+
+    Scale and opacity are rendering state as defined by
+    river_window_manager_v1: they may only be modified during a manage or
+    render sequence and are applied with the next render_finish request.
+
+    Version 2 adds rounded corners and a shadow (also rendering state), and
+    snapshots: a copy of a window's last frame that the window manager can
+    scale, move and fade after the window closed (a close animation).
+
+    The key words "must", "must not", "required", "shall", "shall not",
+    "should", "should not", "recommended", "may", and "optional" in this
+    document are to be interpreted as described in IETF RFC 2119.
+  </description>
+
+  <interface name="newm_river_render_v1" version="2">
+    <description summary="window rendering global interface">
+      This global interface should only be advertised to the client if the
+      river_window_manager_v1 global is also advertised. Only the active
+      window manager owns river_window_v1 objects, so only it can use this
+      interface.
+    </description>
+
+    <enum name="error">
+      <entry name="object_already_created" value="0"
+        summary="a newm_river_window_render_v1 already exists for the window"/>
+    </enum>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the global object">
+        This request indicates that the client will no longer use the
+        newm_river_render_v1 object. Objects created from it are not affected.
+      </description>
+    </request>
+
+    <request name="get_window_render">
+      <description summary="get the rendering object of a window">
+        Create a newm_river_window_render_v1 for the given window. It is a
+        protocol error to make this request more than once for a window while
+        the previous object exists.
+
+        If the river_window_v1 is inert (closed) the new object is inert too.
+      </description>
+      <arg name="id" type="new_id" interface="newm_river_window_render_v1"/>
+      <arg name="window" type="object" interface="river_window_v1"/>
+    </request>
+  </interface>
+
+  <interface name="newm_river_window_render_v1" version="2">
+    <description summary="rendering state of one window">
+      Scale and opacity of one window (both start at 1), and since version 2
+      its corner radius (starts at 0) and shadow (starts absent). Destroying
+      the object returns all of them to their defaults with the next
+      render_finish. Once the window's river_window_v1 is destroyed every
+      request but destroy and snapshot is ignored.
+    </description>
+
+    <enum name="error">
+      <entry name="invalid_scale" value="0" summary="scale is not greater than zero"/>
+      <entry name="invalid_opacity" value="1" summary="opacity is outside [0, 1]"/>
+    </enum>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the object">
+        The window returns to scale 1 and opacity 1 with the next
+        render_finish.
+      </description>
+    </request>
+
+    <request name="set_scale">
+      <description summary="draw the window scaled">
+        Draw the whole window scaled by the given factor about the top-left
+        corner of its river_node_v1 position: the window's surfaces,
+        subsurfaces, popups, borders and decoration surfaces. The application
+        is not resized and receives no new configure.
+
+        While the applied scale is not 1 the window receives no pointer, touch
+        or tablet input: river still reports window_interaction and
+        pointer_enter for it to the window manager, so a click picks the
+        window, but the application sees no pointer focus. Keyboard focus is
+        unaffected.
+
+        The scale must be greater than zero. This is rendering state, applied
+        with the next render_finish. The default is 1.
+      </description>
+      <arg name="scale" type="fixed"/>
+    </request>
+
+    <request name="set_opacity">
+      <description summary="draw the window translucent">
+        Multiply the alpha of every buffer and border of the window (popups
+        included) by the given opacity, on top of any alpha-modifier-v1
+        multiplier the application sets.
+
+        The opacity must be within [0, 1]. This is rendering state, applied
+        with the next render_finish. The default is 1.
+      </description>
+      <arg name="opacity" type="fixed"/>
+    </request>
+
+    <request name="set_corner_radius" since="2">
+      <description summary="round the window's corners">
+        Round the corners of the window's content box (its dimensions at its
+        river_node_v1 position) with the given radius in logical pixels.
+        Every surface buffer of the window (decoration surfaces included)
+        whose corner lies on a corner of that box is clipped to the rounded
+        corner; buffers that do not reach a corner of the box, and popups, are
+        not clipped. While borders are set on all four edges and the window is
+        not clipped by set_clip_box or set_content_clip_box across them, the
+        border is drawn as one outline around the rounded box, its outer
+        radius the radius plus the border width.
+
+        The radius is scaled with set_scale. A fullscreen window is drawn
+        with square corners and without shadow.
+
+        This is rendering state, applied with the next render_finish. The
+        default is 0: square corners.
+      </description>
+      <arg name="radius" type="uint" summary="logical pixels"/>
+    </request>
+
+    <request name="set_shadow" since="2">
+      <description summary="draw a shadow below the window">
+        Draw a soft shadow below the window's surfaces, borders and decoration
+        surfaces, but not inside the window's (rounded) content box. The box
+        casting the shadow is the window's content box grown by spread on
+        every side (its corner radius grown by spread too) and moved by
+        offset_x, offset_y; the shadow fades out over softness logical pixels
+        past that box (a Gaussian with a standard deviation of softness / 2).
+
+        The colour uses the 32-bit RGBA convention of
+        river_window_v1.set_borders (premultiplied alpha) and is multiplied
+        by set_opacity; the shadow is scaled with set_scale. It is not clipped
+        by set_clip_box.
+
+        This is rendering state, applied with the next render_finish. The
+        default is no shadow.
+      </description>
+      <arg name="red" type="uint"/>
+      <arg name="green" type="uint"/>
+      <arg name="blue" type="uint"/>
+      <arg name="alpha" type="uint"/>
+      <arg name="softness" type="uint" summary="logical pixels"/>
+      <arg name="spread" type="int" summary="logical pixels"/>
+      <arg name="offset_x" type="int" summary="logical pixels"/>
+      <arg name="offset_y" type="int" summary="logical pixels"/>
+    </request>
+
+    <request name="clear_shadow" since="2">
+      <description summary="draw no shadow">
+        Remove the shadow. This is rendering state, applied with the next
+        render_finish.
+      </description>
+    </request>
+
+    <request name="snapshot" since="2">
+      <description summary="keep a copy of the window's current frame">
+        Copy the window as river draws it now into a new scene node that
+        river keeps drawing after the window is gone: its surface and
+        decoration surface buffers, borders and shadow, with their current
+        scale, opacity and corners. Popups are not copied. The copy sits
+        directly above the window in the stacking order; when the window
+        manager restacks windows river raises every snapshot above them. It
+        takes no input.
+
+        For a close animation, make this request when river_window_v1.closed
+        arrives, before destroying the river_window_v1: river still draws the
+        window's last buffers until the render sequence that follows, and
+        the copy takes over from it without a visible change.
+
+        Lifetime: the copy is drawn from this request until the first of
+        (1) the client destroys the newm_river_snapshot_v1, (2) the client
+        disconnects, (3) lifetime milliseconds pass (values are clamped to
+        [1, 10000]): river then removes it and sends
+        newm_river_snapshot_v1.expired. If the window is already destroyed,
+        the object is created expired and expired is sent at once.
+      </description>
+      <arg name="id" type="new_id" interface="newm_river_snapshot_v1"/>
+      <arg name="lifetime" type="uint" summary="milliseconds, at most 10000"/>
+    </request>
+  </interface>
+
+  <interface name="newm_river_snapshot_v1" version="2">
+    <description summary="a copy of a window's last frame">
+      Made by newm_river_window_render_v1.snapshot. Its origin is the
+      window's river_node_v1 position at the time of the copy. set_position,
+      set_scale and set_opacity are rendering state: they may only be made
+      during a manage or render sequence and are applied with the next
+      render_finish. After expired every request but destroy is ignored.
+    </description>
+
+    <enum name="error">
+      <entry name="invalid_scale" value="0" summary="scale is not greater than zero"/>
+      <entry name="invalid_opacity" value="1" summary="opacity is outside [0, 1]"/>
+    </enum>
+
+    <request name="destroy" type="destructor">
+      <description summary="remove the copy">
+        Remove the copy at once, not at the next render_finish.
+      </description>
+    </request>
+
+    <request name="set_position">
+      <description summary="move the copy">
+        Draw the copy's origin at x, y, in the coordinate space of
+        river_node_v1.set_position. The default is where the window was.
+      </description>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+    </request>
+
+    <request name="set_scale">
+      <description summary="draw the copy scaled">
+        Draw the copy scaled about its origin by the given factor, relative
+        to the size it was copied at (which already includes the window's
+        own set_scale). It must be greater than zero. The default is 1.
+      </description>
+      <arg name="scale" type="fixed"/>
+    </request>
+
+    <request name="set_opacity">
+      <description summary="draw the copy translucent">
+        Multiply the alpha of everything in the copy by the given opacity,
+        within [0, 1]. The default is 1.
+      </description>
+      <arg name="opacity" type="fixed"/>
+    </request>
+
+    <event name="expired">
+      <description summary="the copy was removed">
+        The lifetime given to the snapshot request passed, or the window was
+        already gone, and river removed the copy. The client should destroy
+        the object.
+      </description>
+    </event>
+  </interface>
+</protocol>

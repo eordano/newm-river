@@ -42,6 +42,17 @@ pub fn create(wlr_text_input: *wlr.TextInputV3) !void {
     wlr_text_input.events.commit.add(&text_input.commit);
     wlr_text_input.events.disable.add(&text_input.disable);
     wlr_text_input.events.destroy.add(&text_input.destroy);
+
+    // A text input made while its client already has keyboard focus gets its enter now (GTK makes
+    // its text input as an entry takes focus, after wl_keyboard.enter); InputRelay.focus() only
+    // reaches the text inputs that existed when the focus changed. sway does the same.
+    if (seat.relay.input_method != null) {
+        if (seat.wlr_seat.keyboard_state.focused_surface) |surface| {
+            if (wlr_text_input.resource.getClient() == surface.resource.getClient()) {
+                wlr_text_input.sendEnter(surface);
+            }
+        }
+    }
 }
 
 fn handleEnable(listener: *wl.Listener(void)) void {
@@ -76,7 +87,14 @@ fn handleCommit(listener: *wl.Listener(void)) void {
     const seat: *Seat = @ptrCast(@alignCast(text_input.wlr_text_input.seat.data));
 
     if (seat.relay.text_input != text_input) {
-        log.err("inactive text input tried to commit an update, client bug?", .{});
+        // A commit sent before the client read the leave river sent on a focus change (GTK 4
+        // commits its cursor rectangle as it loses focus) is the protocol's own race, not a
+        // client bug: only a commit to a still-focused, never-enabled text input is one.
+        if (text_input.wlr_text_input.focused_surface == null) {
+            log.debug("text input committed after it lost focus, ignoring", .{});
+        } else {
+            log.err("inactive text input tried to commit an update, client bug?", .{});
+        }
         return;
     }
 

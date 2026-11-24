@@ -122,7 +122,9 @@ pub fn setGroup(keyboard: *Keyboard) void {
         }
     }
     const input_method = keyboard.device.virtual and blk: {
-        const vkb = keyboard.device.wlr_device.getVirtualKeyboard().?;
+        // newm-river fork: FakeInput.zig's keyboard is virtual but not a virtual-keyboard-v1
+        // one, so it is no input method's keyboard.
+        const vkb = keyboard.device.wlr_device.getVirtualKeyboard() orelse break :blk false;
         const input_method = keyboard.device.seat.relay.input_method orelse break :blk false;
         break :blk vkb.resource.getClient() == input_method.resource.getClient();
     };

@@ -35,6 +35,7 @@ const ShellSurface = @import("ShellSurface.zig");
 const SyncedVirtKb = @import("SyncedVirtKb.zig");
 const Tablet = @import("Tablet.zig");
 const TouchGesture = @import("TouchGesture.zig");
+const NewmGestures = @import("NewmGestures.zig");
 const TouchGesturesSeat = @import("TouchGesturesSeat.zig");
 const Window = @import("Window.zig");
 const XkbBinding = @import("XkbBinding.zig");
@@ -237,9 +238,16 @@ link: wl.list.Link,
 destroying: bool = false,
 
 object: ?*river.SeatV1 = null,
+
+/// newm-river: the serials of the last keyboard and pointer enter, for the activation-token
+/// check (Server.handleNewActivationToken).
+newm_keyboard_enter_serial: ?u32 = null,
+newm_pointer_enter_serial: ?u32 = null,
 layer_shell: LayerShellSeat = .{},
 xkb_bindings_seat: XkbBindingsSeat = .{},
 touch_gestures: TouchGesturesSeat,
+/// newm-river fork: touchpad gesture and axis bindings (newm_river_gestures_v1).
+newm_gestures: NewmGestures.SeatGestures = .{},
 
 event_queue: std.Deque(Event),
 
@@ -299,6 +307,10 @@ op: ?struct {
     /// Coordinates of the pointer cursor at the start of the operation.
     start_x: i32,
     start_y: i32,
+    /// newm-river fork: the pointer motion summed since the start, including motion the output
+    /// edges clamp away (Cursor.processMotionRelative); op_delta reports it.
+    motion_x: f64 = 0,
+    motion_y: f64 = 0,
 } = null,
 
 relay: InputRelay,
@@ -476,6 +488,7 @@ pub fn destroy(seat: *Seat) void {
     seat.request_set_primary_selection.link.remove();
 
     seat.wlr_seat.destroy();
+    seat.newm_gestures.deinit();
     util.gpa.destroy(seat);
 }
 
@@ -512,19 +525,28 @@ pub fn processEvents(seat: *Seat) void {
             .pointer_motion_relative => |ev| seat.cursor.processMotionRelative(&ev),
             .pointer_motion_absolute => |ev| seat.cursor.processMotionAbsolute(&ev),
             .pointer_button => |ev| seat.cursor.processButton(&ev),
-            .pointer_axis => |ev| seat.cursor.processAxis(&ev),
+            .pointer_axis => |ev| if (!seat.newm_gestures.axis(&ev)) seat.cursor.processAxis(&ev),
             .pointer_frame => seat.wlr_seat.pointerNotifyFrame(),
 
-            .pointer_swipe_begin => |ev| pg.sendSwipeBegin(seat.wlr_seat, ev.time_msec, ev.fingers),
-            .pointer_swipe_update => |ev| pg.sendSwipeUpdate(seat.wlr_seat, ev.time_msec, ev.dx, ev.dy),
-            .pointer_swipe_end => |ev| pg.sendSwipeEnd(seat.wlr_seat, ev.time_msec, ev.cancelled),
+            // newm-river fork: a gesture bound by the window manager never reaches clients.
+            .pointer_swipe_begin => |ev| if (!seat.newm_gestures.begin(.swipe, ev.fingers))
+                pg.sendSwipeBegin(seat.wlr_seat, ev.time_msec, ev.fingers),
+            .pointer_swipe_update => |ev| if (!seat.newm_gestures.update(.swipe, ev.dx, ev.dy, 1, 0))
+                pg.sendSwipeUpdate(seat.wlr_seat, ev.time_msec, ev.dx, ev.dy),
+            .pointer_swipe_end => |ev| if (!seat.newm_gestures.end(.swipe, ev.cancelled))
+                pg.sendSwipeEnd(seat.wlr_seat, ev.time_msec, ev.cancelled),
 
-            .pointer_pinch_begin => |ev| pg.sendPinchBegin(seat.wlr_seat, ev.time_msec, ev.fingers),
-            .pointer_pinch_update => |ev| pg.sendPinchUpdate(seat.wlr_seat, ev.time_msec, ev.dx, ev.dy, ev.scale, ev.rotation),
-            .pointer_pinch_end => |ev| pg.sendPinchEnd(seat.wlr_seat, ev.time_msec, ev.cancelled),
+            .pointer_pinch_begin => |ev| if (!seat.newm_gestures.begin(.pinch, ev.fingers))
+                pg.sendPinchBegin(seat.wlr_seat, ev.time_msec, ev.fingers),
+            .pointer_pinch_update => |ev| if (!seat.newm_gestures.update(.pinch, ev.dx, ev.dy, ev.scale, ev.rotation))
+                pg.sendPinchUpdate(seat.wlr_seat, ev.time_msec, ev.dx, ev.dy, ev.scale, ev.rotation),
+            .pointer_pinch_end => |ev| if (!seat.newm_gestures.end(.pinch, ev.cancelled))
+                pg.sendPinchEnd(seat.wlr_seat, ev.time_msec, ev.cancelled),
 
-            .pointer_hold_begin => |ev| pg.sendHoldBegin(seat.wlr_seat, ev.time_msec, ev.fingers),
-            .pointer_hold_end => |ev| pg.sendHoldEnd(seat.wlr_seat, ev.time_msec, ev.cancelled),
+            .pointer_hold_begin => |ev| if (!seat.newm_gestures.begin(.hold, ev.fingers))
+                pg.sendHoldBegin(seat.wlr_seat, ev.time_msec, ev.fingers),
+            .pointer_hold_end => |ev| if (!seat.newm_gestures.end(.hold, ev.cancelled))
+                pg.sendHoldEnd(seat.wlr_seat, ev.time_msec, ev.cancelled),
 
             .touch_down => |ev| seat.processTouchDown(&ev),
             .touch_motion => |ev| seat.processTouchMotion(&ev),
@@ -806,6 +828,7 @@ pub fn manageStart(seat: *Seat) void {
     seat.layer_shell.manageStart();
     seat.xkb_bindings_seat.manageStart();
     seat.touch_gestures.manageStart();
+    seat.newm_gestures.manageStart();
 
     if (server.wm.object) |wm_v1| {
         const new = seat.object == null;
@@ -896,9 +919,7 @@ pub fn manageStart(seat: *Seat) void {
         }
 
         if (seat.op) |*op| {
-            const x: i32 = @intFromFloat(seat.cursor.wlr_cursor.x);
-            const y: i32 = @intFromFloat(seat.cursor.wlr_cursor.y);
-            seat_v1.sendOpDelta(x - op.start_x, y - op.start_y);
+            seat_v1.sendOpDelta(opDelta(op.motion_x), opDelta(op.motion_y));
 
             if (seat.wm_scheduled.op_release and !op.sent_release) {
                 seat_v1.sendOpRelease();
@@ -1020,6 +1041,7 @@ fn handleDestroy(_: *river.SeatV1, seat: *Seat) void {
     seat.layer_shell.makeInert();
     seat.xkb_bindings_seat.makeInert();
     seat.touch_gestures.makeInert();
+    seat.newm_gestures.makeInert();
 
     while (seat.xkb_bindings.first()) |binding| binding.destroy();
     while (seat.pointer_bindings.first()) |binding| binding.destroy();
@@ -1267,6 +1289,12 @@ pub fn keyboardEnterOrLeave(seat: *Seat, target_surface: ?*wlr.Surface) void {
 }
 
 fn keyboardNotifyEnter(seat: *Seat, wlr_surface: *wlr.Surface) void {
+    const before = seat.wlr_seat.keyboard_state.focused_surface;
+    defer {
+        if (seat.wlr_seat.keyboard_state.focused_surface != before) {
+            seat.newm_keyboard_enter_serial = server.wl_server.getSerial();
+        }
+    }
     if (seat.wlr_seat.getKeyboard()) |wlr_keyboard| {
         const group: *KeyboardGroup = @ptrCast(@alignCast(wlr_keyboard.data));
 
@@ -1284,6 +1312,16 @@ fn keyboardNotifyEnter(seat: *Seat, wlr_surface: *wlr.Surface) void {
     } else {
         seat.wlr_seat.keyboardNotifyEnter(wlr_surface, &.{}, null);
     }
+}
+
+/// Whether an activation token's serial is no older than the last keyboard or pointer enter
+/// (compared against both with wrapping arithmetic).
+pub fn newmSerialFresh(seat: *const Seat, serial: u32) bool {
+    for ([_]?u32{ seat.newm_keyboard_enter_serial, seat.newm_pointer_enter_serial }) |last| {
+        const enter = last orelse continue;
+        if (@as(i32, @bitCast(serial -% enter)) >= 0) return true;
+    }
+    return false;
 }
 
 pub fn sendModsToPointerFocus(seat: *Seat) void {
@@ -1583,4 +1621,8 @@ fn handleRequestSetPrimarySelection(
 ) void {
     const seat: *Seat = @fieldParentPtr("request_set_primary_selection", listener);
     seat.wlr_seat.setPrimarySelection(event.source, event.serial);
+}
+
+fn opDelta(motion: f64) i32 {
+    return @intFromFloat(std.math.clamp(@round(motion), std.math.minInt(i32), std.math.maxInt(i32)));
 }

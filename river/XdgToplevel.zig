@@ -17,6 +17,7 @@ const Seat = @import("Seat.zig");
 const XdgPopup = @import("XdgPopup.zig");
 const Window = @import("Window.zig");
 const XdgDecoration = @import("XdgDecoration.zig");
+const NewmOpeningScale = @import("NewmOpeningScale.zig");
 
 const log = std.log.scoped(.xdg);
 
@@ -322,6 +323,7 @@ fn handleCommit(listener: *wl.Listener(*wlr.Surface), _: *wlr.Surface) void {
     if (toplevel.wlr_toplevel.base.initial_commit) {
         assert(window.state != .ready);
         window.state = .ready;
+        NewmOpeningScale.send(toplevel.wlr_toplevel.base.surface, NewmOpeningScale.windowOutput());
         server.wm.dirtyWindowing();
         return;
     }

@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="newm_river_screencast_v1">
+  <copyright>
+    SPDX-FileCopyrightText: © 2026 The newm-river contributors
+    SPDX-License-Identifier: MIT
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to
+    deal in the Software without restriction, including without limitation the
+    rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+    sell copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+    IN THE SOFTWARE.
+  </copyright>
+
+  <description summary="screencasts served by the window manager">
+    This fork-only protocol (newm-river, a fork of river) hands the window
+    manager the screencast requests river receives on the
+    zkde_screencast_unstable_v1 global (KDE's protocol, which Spectacle
+    records through with KPipeWire). The window manager captures the source
+    (with ext-image-copy-capture-v1, say), produces a PipeWire stream and
+    answers with its node id, which river forwards to the client.
+
+    The key words "must", "must not", "required", "shall", "shall not",
+    "should", "should not", "recommended", "may", and "optional" in this
+    document are to be interpreted as described in IETF RFC 2119.
+  </description>
+
+  <interface name="newm_river_screencast_v1" version="1">
+    <description summary="screencast relay global interface">
+      Only the client that is the active window manager receives requests:
+      river relays to the newest newm_river_screencast_v1 bound by the client
+      that owns the river_window_manager_v1 object. While there is none,
+      river fails every zkde_screencast_unstable_v1 stream at once.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the relay object">
+        No more requests are relayed to this object. Casts already created
+        are not affected.
+      </description>
+    </request>
+
+    <event name="stream_output">
+      <description summary="a client asks for a stream of an output">
+        The source is the output called output_name (wl_output.name).
+        pointer is the zkde_screencast_unstable_v1.pointer value the client
+        asked for.
+      </description>
+      <arg name="cast" type="new_id" interface="newm_river_screencast_cast_v1"/>
+      <arg name="output_name" type="string"/>
+      <arg name="pointer" type="uint"/>
+    </event>
+
+    <event name="stream_window">
+      <description summary="a client asks for a stream of a window">
+        window_uuid is the string the client passed, unchanged: the window
+        manager gave it out (as org.kde.KWin's window uuid, say) and resolves
+        it.
+      </description>
+      <arg name="cast" type="new_id" interface="newm_river_screencast_cast_v1"/>
+      <arg name="window_uuid" type="string"/>
+      <arg name="pointer" type="uint"/>
+    </event>
+
+    <event name="stream_region">
+      <description summary="a client asks for a stream of a region">
+        A rectangle in the global logical coordinate space. scale 0 lets the
+        window manager choose.
+      </description>
+      <arg name="cast" type="new_id" interface="newm_river_screencast_cast_v1"/>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="uint"/>
+      <arg name="height" type="uint"/>
+      <arg name="scale" type="fixed"/>
+      <arg name="pointer" type="uint"/>
+    </event>
+  </interface>
+
+  <interface name="newm_river_screencast_cast_v1" version="1">
+    <description summary="one relayed stream">
+      The window manager answers once with created or failed, and may later
+      send closed when the source goes away. River forwards each to the
+      client's zkde_screencast_stream_unstable_v1. Destroying a cast that was
+      never answered fails the client's stream; destroying an answered one
+      closes it.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the cast">
+        The window manager no longer serves this stream.
+      </description>
+    </request>
+
+    <request name="created">
+      <description summary="the PipeWire stream exists">
+        node is the PipeWire node id of the stream.
+      </description>
+      <arg name="node" type="uint"/>
+    </request>
+
+    <request name="failed">
+      <description summary="the stream cannot be made">
+        A human readable reason, forwarded to the client.
+      </description>
+      <arg name="error" type="string"/>
+    </request>
+
+    <request name="closed">
+      <description summary="the stream ended">
+        The source went away or the window manager stopped the stream.
+      </description>
+    </request>
+
+    <event name="stopped">
+      <description summary="the client closed its stream">
+        The client destroyed its zkde_screencast_stream_unstable_v1. The
+        window manager should stop the PipeWire stream and destroy the cast.
+      </description>
+    </event>
+  </interface>
+</protocol>

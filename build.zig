@@ -64,8 +64,17 @@ pub fn build(b: *Build) !void {
         }
     };
 
+    // newm-river fork: draw through scenefx (rounded corners, shadows). scenefx renders with its
+    // own GLES2 renderer only: a river built with it needs EGL (no pixman).
+    const scenefx = b.option(
+        bool,
+        "scenefx",
+        "Render through scenefx for rounded corners and shadows (default: true)",
+    ) orelse true;
+
     const options = b.addOptions();
     options.addOption(bool, "xwayland", xwayland);
+    options.addOption(bool, "scenefx", scenefx);
     options.addOption([]const u8, "version", full_version);
 
     const scanner = Scanner.create(b, .{});
@@ -92,6 +101,15 @@ pub fn build(b: *Build) !void {
     scanner.addCustomProtocol(b.path("protocol/river-libinput-config-v1.xml"));
     scanner.addCustomProtocol(b.path("protocol/river-xkb-config-v1.xml"));
     scanner.addCustomProtocol(b.path("protocol/river-virtual-keyboard-v1.xml"));
+
+    // newm-river fork-only protocols
+    scanner.addCustomProtocol(b.path("protocol/newm-river-render-v1.xml"));
+    scanner.addCustomProtocol(b.path("protocol/newm-river-gestures-v1.xml"));
+    scanner.addCustomProtocol(b.path("protocol/newm-river-screencast-v1.xml"));
+    scanner.addCustomProtocol(b.path("protocol/newm-river-shortcuts-v1.xml"));
+    scanner.addCustomProtocol(b.path("protocol/newm-river-hints-v1.xml"));
+    scanner.addCustomProtocol(b.path("protocol/upstream/zkde-screencast-unstable-v1.xml"));
+    scanner.addCustomProtocol(b.path("protocol/upstream/kde-fake-input.xml"));
 
     scanner.addCustomProtocol(b.path("protocol/upstream/wlr-layer-shell-unstable-v1.xml"));
     scanner.addCustomProtocol(b.path("protocol/upstream/wlr-output-power-management-unstable-v1.xml"));
@@ -132,6 +150,14 @@ pub fn build(b: *Build) !void {
     scanner.generate("river_libinput_config_v1", 2);
     scanner.generate("river_xkb_config_v1", 3);
     scanner.generate("river_virtual_keyboard_manager_v1", 1);
+
+    scanner.generate("newm_river_render_v1", 2);
+    scanner.generate("newm_river_gestures_v1", 4);
+    scanner.generate("newm_river_screencast_v1", 1);
+    scanner.generate("newm_river_shortcuts_v1", 1);
+    scanner.generate("newm_river_hints_v1", 2);
+    scanner.generate("zkde_screencast_unstable_v1", 5);
+    scanner.generate("org_kde_kwin_fake_input", 6);
 
     scanner.generate("zwlr_output_power_manager_v1", 1);
     scanner.generate("zwlr_layer_shell_v1", 4);
@@ -176,6 +202,9 @@ pub fn build(b: *Build) !void {
         river.root_module.linkSystemLibrary("libevdev", .{});
         river.root_module.linkSystemLibrary("libinput", .{});
         river.root_module.linkSystemLibrary("wayland-server", .{});
+        // libscenefx exports wlroots' wlr_scene_* (and wlr_egl_*) symbols with its own
+        // implementations: it must come before wlroots so the dynamic linker binds them first.
+        if (scenefx) river.root_module.linkSystemLibrary("scenefx-0.5", .{});
         river.root_module.linkSystemLibrary("wlroots-0.20", .{});
         river.root_module.linkSystemLibrary("xkbcommon", .{});
         river.root_module.linkSystemLibrary("pixman-1", .{});
@@ -249,7 +278,31 @@ pub fn build(b: *Build) !void {
         });
         const run_slotmap_test = b.addRunArtifact(slotmap_test);
 
+        const newm_gestures_test = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("river/NewmGestureState.zig"),
+                .target = target,
+                .optimize = optimize,
+            }),
+            .use_llvm = use_llvm,
+            .use_lld = use_llvm,
+        });
+        const run_newm_gestures_test = b.addRunArtifact(newm_gestures_test);
+
+        const fake_input_policy_test = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("river/NewmFakeInputPolicy.zig"),
+                .target = target,
+                .optimize = optimize,
+            }),
+            .use_llvm = use_llvm,
+            .use_lld = use_llvm,
+        });
+        const run_fake_input_policy_test = b.addRunArtifact(fake_input_policy_test);
+
         const test_step = b.step("test", "Run the tests");
         test_step.dependOn(&run_slotmap_test.step);
+        test_step.dependOn(&run_newm_gestures_test.step);
+        test_step.dependOn(&run_fake_input_policy_test.step);
     }
 }

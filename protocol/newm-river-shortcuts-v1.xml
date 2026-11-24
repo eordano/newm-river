@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="newm_river_shortcuts_v1">
+  <copyright>
+    SPDX-FileCopyrightText: © 2026 The newm-river contributors
+    SPDX-License-Identifier: MIT
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to
+    deal in the Software without restriction, including without limitation the
+    rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+    sell copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+    IN THE SOFTWARE.
+  </copyright>
+
+  <description summary="keyboard shortcuts inhibition for the window manager">
+    This fork-only protocol (newm-river, a fork of river) carries what the
+    window manager needs for keyboard-shortcuts-inhibit-unstable-v1, which
+    river serves to clients: river activates every inhibitor a client creates
+    for its surface (as niri does), and while the surface with a seat's
+    keyboard focus holds an active inhibitor, river matches none of that
+    seat's river_xkb_binding_v1 objects but the ones the window manager marked
+    not inhibitable, and sends the keys to the focused client instead. A VM
+    viewer or a remote desktop then gets Super and Alt+Tab.
+
+    The key words "must", "must not", "required", "shall", "shall not",
+    "should", "should not", "recommended", "may", and "optional" in this
+    document are to be interpreted as described in IETF RFC 2119.
+  </description>
+
+  <interface name="newm_river_shortcuts_v1" version="1">
+    <description summary="shortcuts inhibition global interface">
+      This global interface should only be advertised to the client if the
+      river_window_manager_v1 global is also advertised.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the global object">
+        The client will no longer use the newm_river_shortcuts_v1 object.
+        Bindings keep the inhibitable state last set.
+      </description>
+    </request>
+
+    <request name="set_inhibitable">
+      <description summary="whether an inhibitor holds back a binding">
+        A binding is inhibitable when it is created: an active inhibitor on
+        the focused surface keeps it from matching. A binding set not
+        inhibitable (0) still matches, so the window manager keeps a way to
+        toggle the inhibitor off or lock the session. Ignored for an inert
+        binding.
+      </description>
+      <arg name="binding" type="object" interface="river_xkb_binding_v1"/>
+      <arg name="inhibitable" type="uint" summary="1 inhibitable, 0 not"/>
+    </request>
+
+    <request name="toggle_inhibit">
+      <description summary="toggle the focused surface's inhibitor">
+        Deactivate the inhibitor of the surface with the seat's keyboard
+        focus when it is active, activate it when it is not. Nothing happens
+        when that surface holds no inhibitor or the seat is inert.
+      </description>
+      <arg name="seat" type="object" interface="river_seat_v1"/>
+    </request>
+  </interface>
+</protocol>

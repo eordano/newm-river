@@ -1,0 +1,321 @@
+## river-input-management-v1.xml
+river_input_manager_v1 v2
+  > stop()
+  < finished()
+  > destroy()
+  > create_seat(name:string)
+  > destroy_seat(name:string)
+  < input_device(id:new_id(river_input_device_v1))
+river_input_device_v1 v2
+  > destroy()
+  < removed()
+  < type(type:uint/type)
+  < name(name:string)
+  > assign_to_seat(name:string)
+  > set_repeat_info(rate:int, delay:int)
+  > set_scroll_factor(factor:fixed)
+  > map_to_output(output:object(wl_output)?)
+  > map_to_rectangle(x:int, y:int, width:int, height:int)
+  < done() since 2
+## river-layer-shell-v1.xml
+river_layer_shell_v1 v1
+  > destroy()
+  > get_output(id:new_id(river_layer_shell_output_v1), output:object(river_output_v1))
+  > get_seat(id:new_id(river_layer_shell_seat_v1), seat:object(river_seat_v1))
+river_layer_shell_output_v1 v1
+  > destroy()
+  < non_exclusive_area(x:int, y:int, width:int, height:int)
+  > set_default()
+river_layer_shell_seat_v1 v1
+  > destroy()
+  < focus_exclusive()
+  < focus_non_exclusive()
+  < focus_none()
+## river-libinput-config-v1.xml
+river_libinput_config_v1 v2
+  > stop()
+  < finished()
+  > destroy()
+  < libinput_device(id:new_id(river_libinput_device_v1))
+  > create_accel_config(id:new_id(river_libinput_accel_config_v1), profile:uint/river_libinput_device_v1.accel_profile)
+river_libinput_device_v1 v2
+  > destroy()
+  < removed()
+  < input_device(device:object(river_input_device_v1))
+  < send_events_support(modes:uint/send_events_modes)
+  < send_events_default(mode:uint/send_events_modes)
+  < send_events_current(mode:uint/send_events_modes)
+  > set_send_events(result:new_id(river_libinput_result_v1), mode:uint/send_events_modes)
+  < tap_support(finger_count:int)
+  < tap_default(state:uint/tap_state)
+  < tap_current(state:uint/tap_state)
+  > set_tap(result:new_id(river_libinput_result_v1), state:uint/tap_state)
+  < tap_button_map_default(button_map:uint/tap_button_map)
+  < tap_button_map_current(button_map:uint/tap_button_map)
+  > set_tap_button_map(result:new_id(river_libinput_result_v1), button_map:uint/tap_button_map)
+  < drag_default(state:uint/drag_state)
+  < drag_current(state:uint/drag_state)
+  > set_drag(result:new_id(river_libinput_result_v1), state:uint/drag_state)
+  < drag_lock_default(state:uint/drag_lock_state)
+  < drag_lock_current(state:uint/drag_lock_state)
+  > set_drag_lock(result:new_id(river_libinput_result_v1), state:uint/drag_lock_state)
+  < three_finger_drag_support(finger_count:int)
+  < three_finger_drag_default(state:uint/three_finger_drag_state)
+  < three_finger_drag_current(state:uint/three_finger_drag_state)
+  > set_three_finger_drag(result:new_id(river_libinput_result_v1), state:uint/three_finger_drag_state)
+  < calibration_matrix_support(supported:int)
+  < calibration_matrix_default(matrix:array)
+  < calibration_matrix_current(matrix:array)
+  > set_calibration_matrix(result:new_id(river_libinput_result_v1), matrix:array)
+  < accel_profiles_support(profiles:uint/accel_profiles)
+  < accel_profile_default(profile:uint/accel_profile)
+  < accel_profile_current(profile:uint/accel_profile)
+  > set_accel_profile(result:new_id(river_libinput_result_v1), profile:uint/accel_profile)
+  < accel_speed_default(speed:array)
+  < accel_speed_current(speed:array)
+  > set_accel_speed(result:new_id(river_libinput_result_v1), speed:array)
+  > apply_accel_config(result:new_id(river_libinput_result_v1), config:object(river_libinput_accel_config_v1))
+  < natural_scroll_support(supported:int)
+  < natural_scroll_default(state:uint/natural_scroll_state)
+  < natural_scroll_current(state:uint/natural_scroll_state)
+  > set_natural_scroll(result:new_id(river_libinput_result_v1), state:uint/natural_scroll_state)
+  < left_handed_support(supported:int)
+  < left_handed_default(state:uint/left_handed_state)
+  < left_handed_current(state:uint/left_handed_state)
+  > set_left_handed(result:new_id(river_libinput_result_v1), state:uint/left_handed_state)
+  < click_method_support(methods:uint/click_methods)
+  < click_method_default(method:uint/click_method)
+  < click_method_current(method:uint/click_method)
+  > set_click_method(result:new_id(river_libinput_result_v1), method:uint/click_method)
+  < clickfinger_button_map_default(button_map:uint/clickfinger_button_map)
+  < clickfinger_button_map_current(button_map:uint/clickfinger_button_map)
+  > set_clickfinger_button_map(result:new_id(river_libinput_result_v1), button_map:uint/clickfinger_button_map)
+  < middle_emulation_support(supported:int)
+  < middle_emulation_default(state:uint/middle_emulation_state)
+  < middle_emulation_current(state:uint/middle_emulation_state)
+  > set_middle_emulation(result:new_id(river_libinput_result_v1), state:uint/middle_emulation_state)
+  < scroll_method_support(methods:uint/scroll_methods)
+  < scroll_method_default(method:uint/scroll_method)
+  < scroll_method_current(method:uint/scroll_method)
+  > set_scroll_method(result:new_id(river_libinput_result_v1), method:uint/scroll_method)
+  < scroll_button_default(button:uint)
+  < scroll_button_current(button:uint)
+  > set_scroll_button(result:new_id(river_libinput_result_v1), button:uint)
+  < scroll_button_lock_default(state:uint/scroll_button_lock_state)
+  < scroll_button_lock_current(state:uint/scroll_button_lock_state)
+  > set_scroll_button_lock(result:new_id(river_libinput_result_v1), state:uint/scroll_button_lock_state)
+  < dwt_support(supported:int)
+  < dwt_default(state:uint/dwt_state)
+  < dwt_current(state:uint/dwt_state)
+  > set_dwt(result:new_id(river_libinput_result_v1), state:uint/dwt_state)
+  < dwtp_support(supported:int)
+  < dwtp_default(state:uint/dwtp_state)
+  < dwtp_current(state:uint/dwtp_state)
+  > set_dwtp(result:new_id(river_libinput_result_v1), state:uint/dwtp_state)
+  < rotation_support(supported:int)
+  < rotation_default(angle:uint)
+  < rotation_current(angle:uint)
+  > set_rotation(result:new_id(river_libinput_result_v1), angle:uint)
+  < done() since 2
+river_libinput_accel_config_v1 v1
+  > destroy()
+  > set_points(result:new_id(river_libinput_result_v1), type:uint/accel_type, step:array, points:array)
+river_libinput_result_v1 v1
+  < success()
+  < unsupported()
+  < invalid()
+## river-touch-gestures-v1.xml
+river_touch_gestures_v1 v1
+  > destroy()
+  > get_seat(id:new_id(river_touch_gestures_seat_v1), seat:object(river_seat_v1))
+river_touch_gestures_seat_v1 v1
+  > destroy()
+  > set_arbitration_timeout(msec:uint)
+  > get_gesture(id:new_id(river_touch_gesture_v1), finger_count:uint)
+river_touch_gesture_v1 v1
+  > destroy()
+  > enable()
+  > disable()
+  < start()
+  < end()
+  < cancel()
+  < finger_count(finger_count:uint)
+  < delta_motion(dx:int, dy:int)
+  < scale(scale:fixed)
+  > set_threshold_motion(min_distance:int)
+  > set_direction(direction:uint/direction, min_distance:int)
+  > set_threshold_scale(in:fixed, out:fixed)
+  > set_edge(edge:uint/edge, max_distance:int)
+## river-virtual-keyboard-v1.xml
+river_virtual_keyboard_manager_v1 v1
+  > destroy()
+  > sync_keyboard(virtual_keyboard:object(zwp_virtual_keyboard_v1))
+## river-window-management-v1.xml
+river_window_manager_v1 v6
+  < unavailable()
+  > stop()
+  < finished()
+  > destroy()
+  < manage_start()
+  > manage_finish()
+  > manage_dirty()
+  < render_start()
+  > render_finish()
+  < session_locked()
+  < session_unlocked()
+  < window(id:new_id(river_window_v1))
+  < output(id:new_id(river_output_v1))
+  < seat(id:new_id(river_seat_v1))
+  > get_shell_surface(id:new_id(river_shell_surface_v1), surface:object(wl_surface))
+  > exit_session() since 4
+river_window_v1 v6
+  > destroy()
+  < closed()
+  > close()
+  > get_node(id:new_id(river_node_v1))
+  < dimensions_hint(min_width:int, min_height:int, max_width:int, max_height:int)
+  < dimensions(width:int, height:int)
+  > propose_dimensions(width:int, height:int)
+  > hide()
+  > show()
+  < app_id(app_id:string?)
+  < title(title:string?)
+  < parent(parent:object(river_window_v1)?)
+  < decoration_hint(hint:uint/decoration_hint)
+  > use_csd()
+  > use_ssd()
+  > set_borders(edges:uint/edges, width:int, r:uint, g:uint, b:uint, a:uint)
+  > set_tiled(edges:uint/edges)
+  > get_decoration_above(id:new_id(river_decoration_v1), surface:object(wl_surface))
+  > get_decoration_below(id:new_id(river_decoration_v1), surface:object(wl_surface))
+  < pointer_move_requested(seat:object(river_seat_v1))
+  < pointer_resize_requested(seat:object(river_seat_v1), edges:uint/edges)
+  > inform_resize_start()
+  > inform_resize_end()
+  > set_capabilities(caps:uint/capabilities)
+  < show_window_menu_requested(x:int, y:int)
+  < maximize_requested()
+  < unmaximize_requested()
+  > inform_maximized()
+  > inform_unmaximized()
+  < fullscreen_requested(output:object(river_output_v1)?)
+  < exit_fullscreen_requested()
+  > inform_fullscreen()
+  > inform_not_fullscreen()
+  > fullscreen(output:object(river_output_v1))
+  > exit_fullscreen()
+  < minimize_requested()
+  > set_clip_box(x:int, y:int, width:int, height:int) since 2
+  < unreliable_pid(unreliable_pid:int) since 2
+  > set_content_clip_box(x:int, y:int, width:int, height:int) since 3
+  < presentation_hint(hint:uint/river_output_v1.presentation_mode) since 4
+  < identifier(identifier:string) since 4
+  > set_dimension_bounds(max_width:int, max_height:int) since 4
+  < capture_sessions(count:uint) since 5
+  < touch_move_requested(seat:object(river_seat_v1), touch_point:int) since 6
+  < touch_resize_requested(seat:object(river_seat_v1), touch_point:int, edges:uint/edges) since 6
+river_decoration_v1 v6
+  > destroy()
+  > set_offset(x:int, y:int)
+  > sync_next_commit()
+river_shell_surface_v1 v6
+  > destroy()
+  > get_node(id:new_id(river_node_v1))
+  > sync_next_commit()
+river_node_v1 v6
+  > destroy()
+  > set_position(x:int, y:int)
+  > place_top()
+  > place_bottom()
+  > place_above(other:object(river_node_v1))
+  > place_below(other:object(river_node_v1))
+river_output_v1 v6
+  > destroy()
+  < removed()
+  < wl_output(name:uint)
+  < position(x:int, y:int)
+  < dimensions(width:int, height:int)
+  > set_presentation_mode(mode:uint/presentation_mode) since 4
+  < capture_sessions(count:uint) since 5
+river_seat_v1 v6
+  > destroy()
+  < removed()
+  < wl_seat(name:uint)
+  > focus_window(window:object(river_window_v1))
+  > focus_shell_surface(shell_surface:object(river_shell_surface_v1))
+  > clear_focus()
+  < pointer_enter(window:object(river_window_v1))
+  < pointer_leave()
+  < window_interaction(window:object(river_window_v1))
+  < shell_surface_interaction(shell_surface:object(river_shell_surface_v1))
+  > op_start_pointer()
+  < op_delta(dx:int, dy:int)
+  < op_release()
+  > op_end()
+  > get_pointer_binding(id:new_id(river_pointer_binding_v1), button:uint, modifiers:uint/modifiers)
+  > set_xcursor_theme(name:string, size:uint) since 2
+  < pointer_position(x:int, y:int) since 2
+  > pointer_warp(x:int, y:int) since 3
+  > op_start_touch(touch_point:int) since 6
+  < op_delta_touch(touch_point:int, dx:int, dy:int) since 6
+  < op_release_touch(touch_point:int) since 6
+  < op_cancel_touch(touch_point:int) since 6
+  > op_end_touch(touch_point:int) since 6
+river_pointer_binding_v1 v6
+  > destroy()
+  > enable()
+  > disable()
+  < pressed()
+  < released()
+## river-xkb-bindings-v1.xml
+river_xkb_bindings_v1 v3
+  > destroy()
+  > get_xkb_binding(seat:object(river_seat_v1), id:new_id(river_xkb_binding_v1), keysym:uint, modifiers:uint/river_seat_v1.modifiers)
+  > get_seat(id:new_id(river_xkb_bindings_seat_v1), seat:object(river_seat_v1)) since 2
+river_xkb_binding_v1 v3
+  > destroy()
+  > set_layout_override(layout:uint)
+  > enable()
+  > disable()
+  < pressed()
+  < released()
+  < stop_repeat() since 2
+river_xkb_bindings_seat_v1 v3
+  > destroy() since 2
+  > ensure_next_key_eaten() since 2
+  > cancel_ensure_next_key_eaten() since 2
+  < ate_unbound_key() since 2
+  > modifiers_watch(modifiers:uint/river_seat_v1.modifiers) since 3
+  < modifiers_update(old:uint/river_seat_v1.modifiers, new:uint/river_seat_v1.modifiers) since 3
+## river-xkb-config-v1.xml
+river_xkb_config_v1 v3
+  > stop()
+  < finished()
+  > destroy()
+  > create_keymap(id:new_id(river_xkb_keymap_v1), fd:fd, format:uint/keymap_format)
+  < xkb_keyboard(id:new_id(river_xkb_keyboard_v1))
+river_xkb_keymap_v1 v3
+  > destroy()
+  < success()
+  < failure(error_msg:string)
+river_xkb_keyboard_v1 v3
+  > destroy()
+  < removed()
+  < input_device(device:object(river_input_device_v1))
+  > set_keymap(keymap:object(river_xkb_keymap_v1))
+  > set_layout_by_index(index:int)
+  > set_layout_by_name(name:string)
+  < layout(index:uint, name:string?)
+  > capslock_enable()
+  > capslock_disable()
+  < capslock_enabled()
+  < capslock_disabled()
+  > numlock_enable()
+  > numlock_disable()
+  < numlock_enabled()
+  < numlock_disabled()
+  < done() since 2
+  > scrolllock_enable() since 3
+  > scrolllock_disable() since 3
+  < scrolllock_enabled() since 3
+  < scrolllock_disabled() since 3

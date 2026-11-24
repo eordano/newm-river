@@ -373,6 +373,23 @@ pub fn processMotionRelative(cursor: *Cursor, event: *const Seat.Event.PointerMo
         }
     }
 
+    // newm-river fork: a pointer op follows the motion asked for, not the cursor, which stops at
+    // the output edges (a pan keeps going past the screen edge, as niri's does).
+    if (cursor.seat.op) |*op| {
+        op.motion_x += dx;
+        op.motion_y += dy;
+    }
+
+    // newm-river fork: the window manager gets this motion with and without acceleration
+    // (newm_river_gestures_seat_v1.pointer_motion), the unaccelerated part held back by a
+    // confinement in the same proportion as the accelerated one.
+    cursor.seat.newm_gestures.pointerMotion(
+        dx,
+        dy,
+        if (event.delta_x != 0) event.unaccel_dx * (dx / event.delta_x) else event.unaccel_dx,
+        if (event.delta_y != 0) event.unaccel_dy * (dy / event.delta_y) else event.unaccel_dy,
+    );
+
     cursor.move(&event.mapping, dx, dy);
 
     switch (cursor.mode) {
@@ -495,6 +512,17 @@ pub fn processButton(cursor: *Cursor, event: *const Seat.Event.PointerButton) vo
 
         switch (cursor.mode) {
             .passthrough => {
+                const on_desktop = blk: {
+                    const at = server.scene.at(cursor.wlr_cursor.x, cursor.wlr_cursor.y) orelse break :blk true;
+                    break :blk switch (at.data) {
+                        .layer_surface => |layer_surface| switch (layer_surface.wlr_layer_surface.current.layer) {
+                            .background, .bottom => true,
+                            else => false,
+                        },
+                        else => false,
+                    };
+                };
+                if (on_desktop) cursor.seat.newm_gestures.desktopPress(cursor.wlr_cursor.x, cursor.wlr_cursor.y);
                 if (server.scene.at(cursor.wlr_cursor.x, cursor.wlr_cursor.y)) |at| {
                     cursor.seat.interact(at);
 
@@ -664,6 +692,9 @@ fn passthrough(cursor: *Cursor, time: u32) void {
         if (result.surface) |surface| {
             if (cursor.seat.wlr_seat.pointer_state.focused_surface != surface) {
                 cursor.seat.wlr_seat.pointerNotifyEnter(surface, result.sx, result.sy);
+                if (cursor.seat.wlr_seat.pointer_state.focused_surface == surface) {
+                    cursor.seat.newm_pointer_enter_serial = server.wl_server.getSerial();
+                }
                 cursor.seat.sendModsToPointerFocus();
             }
             cursor.seat.wlr_seat.pointerNotifyMotion(time, result.sx, result.sy);

@@ -519,6 +519,8 @@ fn renderFinish(wm: *WindowManager) void {
                 },
             }
         }
+        // newm-river fork: closed windows' snapshots (NewmSnapshot.zig).
+        server.newm_render.renderFinish(reorder);
     }
 
     {

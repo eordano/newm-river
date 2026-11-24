@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="newm_river_hints_v1">
+  <copyright>
+    SPDX-FileCopyrightText: © 2026 The newm-river contributors
+    SPDX-License-Identifier: MIT
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to
+    deal in the Software without restriction, including without limitation the
+    rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+    sell copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+    IN THE SOFTWARE.
+  </copyright>
+
+  <description summary="client hints the window manager acts on">
+    This fork-only protocol (newm-river, a fork of river) passes the window
+    manager what river learns from two client protocols it serves:
+    xdg-system-bell-v1 rings and xdg-dialog-v1 modality. The window manager
+    marks a window that rang while unfocused urgent, and opens a modal dialog
+    floating over its parent, keeping the focus on the dialog while it is up.
+    Since version 2 it also passes activation requests (xdg-activation-v1 and
+    wlr-foreign-toplevel-management activate), which the window manager answers
+    by focusing the window or marking it urgent.
+
+    The key words "must", "must not", "required", "shall", "shall not",
+    "should", "should not", "recommended", "may", and "optional" in this
+    document are to be interpreted as described in IETF RFC 2119.
+  </description>
+
+  <interface name="newm_river_hints_v1" version="2">
+    <description summary="client hints global interface">
+      This global interface should only be advertised to the client if the
+      river_window_manager_v1 global is also advertised. Events name
+      river_window_v1 objects of the same client: a client that is not the
+      window manager gets none.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the global object">
+        The client will no longer use the newm_river_hints_v1 object.
+      </description>
+    </request>
+
+    <event name="bell">
+      <description summary="a window rang the system bell">
+        A client rang xdg_system_bell_v1 with a surface of this window (its
+        toplevel or a subsurface or popup of it). A ring that names no
+        surface, or a surface that is not part of a window, sends nothing.
+      </description>
+      <arg name="window" type="object" interface="river_window_v1"/>
+    </event>
+
+    <event name="modal">
+      <description summary="the window's modality changed">
+        Sent in the manage sequence that introduces the window and whenever
+        the window becomes or stops being a modal dialog (xdg_dialog_v1
+        set_modal, unset_modal, or the dialog object's destruction). The
+        window's parent comes in river_window_v1.parent.
+      </description>
+      <arg name="window" type="object" interface="river_window_v1"/>
+      <arg name="modal" type="uint" summary="1 for a modal dialog, 0 otherwise"/>
+    </event>
+
+    <enum name="source" since="2">
+      <entry name="token" value="0"
+        summary="xdg-activation-v1 with a token made from a fresh input serial"/>
+      <entry name="urgent_only" value="1"
+        summary="xdg-activation-v1 with a token that names no seat or serial"/>
+      <entry name="foreign_toplevel" value="2"
+        summary="a wlr-foreign-toplevel-management activate request (a taskbar)"/>
+    </enum>
+
+    <event name="activate" since="2">
+      <description summary="a client asked to activate a window">
+        A client asked to activate this window. For xdg-activation-v1 the
+        compositor checks the token first: a token whose
+        serial is older than the seat's last keyboard and pointer enter (it was
+        made before the focus moved on) or that timed out sends nothing; a
+        token with no seat or serial sends urgent_only. The window manager
+        decides what to do with the window, for example focusing it for token
+        and foreign_toplevel and marking it urgent for urgent_only, unless a
+        window rule (on-xdg-activate) says otherwise.
+      </description>
+      <arg name="window" type="object" interface="river_window_v1"/>
+      <arg name="source" type="uint" enum="source"/>
+    </event>
+  </interface>
+</protocol>

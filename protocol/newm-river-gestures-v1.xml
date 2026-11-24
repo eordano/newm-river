@@ -1,0 +1,257 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="newm_river_gestures_v1">
+  <copyright>
+    SPDX-FileCopyrightText: © 2026 The newm-river contributors
+    SPDX-License-Identifier: MIT
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to
+    deal in the Software without restriction, including without limitation the
+    rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+    sell copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+    IN THE SOFTWARE.
+  </copyright>
+
+  <description summary="touchpad gesture and pointer axis bindings">
+    This fork-only protocol (newm-river, a fork of river) lets the
+    river-window-management-v1 window manager bind touchpad gestures
+    (swipe, pinch, hold) and pointer axis motion (wheel, two-finger scroll)
+    with a modifier mask, the way river_pointer_binding_v1 binds buttons.
+
+    A gesture that begins with the finger count and the exact modifiers of an
+    enabled binding is consumed: the window manager receives begin, update and
+    end events and no client receives the gesture over pointer-gestures-v1.
+    A gesture that matches no enabled binding reaches clients as before.
+    Likewise an axis event whose orientation and modifiers match an enabled
+    axis binding is consumed and reported to the window manager instead of
+    the client under the pointer. Since version 4 the seat object also
+    reports the pointer's motion with and without acceleration
+    (pointer_motion), which river-window-management-v1 does not.
+
+    Events are sent as part of a manage sequence, before
+    river_window_manager_v1.manage_start, like river_pointer_binding_v1
+    pressed and released. Motion between two manage sequences is coalesced
+    into a single update, axis or pointer_motion event.
+
+    The key words "must", "must not", "required", "shall", "shall not",
+    "should", "should not", "recommended", "may", and "optional" in this
+    document are to be interpreted as described in IETF RFC 2119.
+  </description>
+
+  <interface name="newm_river_gestures_v1" version="4">
+    <description summary="gesture bindings global interface">
+      This global interface should only be advertised to the client if the
+      river_window_manager_v1 global is also advertised.
+    </description>
+
+    <enum name="error">
+      <entry name="object_already_created" value="0"
+        summary="newm_river_gestures_seat_v1 already created for the seat"/>
+    </enum>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the global object">
+        Objects created from this one are not affected.
+      </description>
+    </request>
+
+    <request name="get_seat">
+      <description summary="get the gesture bindings of a seat">
+        It is a protocol error to make this request more than once for a seat.
+        If the river_seat_v1 is inert the new object is inert too.
+      </description>
+      <arg name="id" type="new_id" interface="newm_river_gestures_seat_v1"/>
+      <arg name="seat" type="object" interface="river_seat_v1"/>
+    </request>
+  </interface>
+
+  <interface name="newm_river_gestures_seat_v1" version="4">
+    <description summary="gesture bindings of one seat">
+      Destroying this object destroys the bindings created from it: they turn
+      inert.
+    </description>
+
+    <enum name="error">
+      <entry name="invalid_finger_count" value="0" summary="finger count is zero"/>
+      <entry name="invalid_axis" value="1" summary="invalid wl_pointer.axis value"/>
+      <entry name="invalid_kind" value="2" summary="invalid kind value"/>
+    </enum>
+
+    <enum name="kind">
+      <entry name="swipe" value="0"/>
+      <entry name="pinch" value="1"/>
+      <entry name="hold" value="2"/>
+    </enum>
+
+    <request name="destroy" type="destructor"/>
+
+    <request name="get_gesture_binding">
+      <description summary="bind a touchpad gesture">
+        Bind gestures of the given kind that begin with exactly finger_count
+        fingers while exactly the given modifiers are held. The binding starts
+        disabled. If several enabled bindings match, the oldest wins.
+      </description>
+      <arg name="id" type="new_id" interface="newm_river_gesture_binding_v1"/>
+      <arg name="kind" type="uint" enum="kind"/>
+      <arg name="finger_count" type="uint"/>
+      <arg name="modifiers" type="uint" enum="river_seat_v1.modifiers"/>
+    </request>
+
+    <event name="desktop_press" since="3">
+      <description summary="a pointer button pressed on the desktop">
+        A pointer button no pointer binding takes was pressed where neither
+        a window nor a shell surface is: over no surface, or over a layer
+        surface of the background or bottom layer (a wallpaper). The press
+        still reaches that layer surface. x and y are the pointer's position
+        in the compositor's logical coordinate space. With no window there
+        the window manager learns of the press only from this event, for
+        example to make that output the active one. Sent as it happens,
+        outside manage sequences.
+      </description>
+      <arg name="x" type="int" summary="global x coordinate"/>
+      <arg name="y" type="int" summary="global y coordinate"/>
+    </event>
+
+    <event name="pointer_motion" since="4">
+      <description summary="relative pointer motion, with and without acceleration">
+        The relative motion of the seat's pointer summed since the previous
+        pointer_motion event, twice: dx and dy as the cursor moves (with the
+        pointer acceleration libinput applies), unaccel_dx and unaccel_dy
+        without it, as wp_relative_pointer_v1 reports them. Absolute motion
+        counts as its displacement in both. Motion a pointer constraint holds
+        back is not counted; motion the output edges clamp away is, as in
+        river_seat_v1.op_delta. Warps do not count.
+
+        Sent as part of a manage sequence, before
+        river_window_manager_v1.manage_start, if the pointer moved since the
+        previous pointer_motion event, whether or not a pointer operation
+        runs. Motion before this object was created is not reported.
+
+        river_seat_v1.op_delta and pointer_position carry the accelerated
+        motion only. With this event the window manager can follow the hand
+        instead, for example in a modifier key pan that takes only a share s
+        of the acceleration: unaccel + s * (accelerated - unaccel) per event,
+        which is linear, so the same expression of these sums.
+      </description>
+      <arg name="dx" type="fixed" summary="accelerated x motion"/>
+      <arg name="dy" type="fixed" summary="accelerated y motion"/>
+      <arg name="unaccel_dx" type="fixed" summary="unaccelerated x motion"/>
+      <arg name="unaccel_dy" type="fixed" summary="unaccelerated y motion"/>
+    </event>
+
+    <request name="get_axis_binding">
+      <description summary="bind pointer axis motion">
+        Bind axis events of the given orientation (wheel or touchpad scroll)
+        while exactly the given modifiers are held. The binding starts
+        disabled. If several enabled bindings match, the oldest wins.
+      </description>
+      <arg name="id" type="new_id" interface="newm_river_axis_binding_v1"/>
+      <arg name="axis" type="uint" enum="wl_pointer.axis"/>
+      <arg name="modifiers" type="uint" enum="river_seat_v1.modifiers"/>
+    </request>
+  </interface>
+
+  <interface name="newm_river_gesture_binding_v1" version="4">
+    <description summary="a touchpad gesture binding">
+      enable and disable are window management state: they may only be made
+      during a manage sequence and take effect after it.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the binding">
+        A gesture in progress through this binding stays consumed until it
+        ends, without further events.
+      </description>
+    </request>
+
+    <request name="enable"/>
+    <request name="disable">
+      <description summary="disable the binding">
+        A gesture already in progress through this binding continues to be
+        reported until it ends.
+      </description>
+    </request>
+
+    <event name="begin">
+      <description summary="a bound gesture began"/>
+      <arg name="finger_count" type="uint"/>
+    </event>
+
+    <event name="update">
+      <description summary="the gesture moved">
+        dx and dy are the summed motion of the fingers' centre since the
+        previous update, in the same accelerated units as pointer motion
+        (libinput reports no unaccelerated gesture deltas through wlroots).
+        scale is the pinch scale relative to the begin (1 for swipe), rotation
+        the summed rotation in degrees clockwise since the previous update
+        (0 for swipe). Hold gestures have no updates.
+      </description>
+      <arg name="dx" type="fixed"/>
+      <arg name="dy" type="fixed"/>
+      <arg name="scale" type="fixed"/>
+      <arg name="rotation" type="fixed"/>
+    </event>
+
+    <event name="end">
+      <description summary="the gesture ended">
+        cancelled is 1 if libinput cancelled the gesture (for example a
+        finger was added or lifted early), 0 otherwise.
+      </description>
+      <arg name="cancelled" type="uint"/>
+    </event>
+  </interface>
+
+  <interface name="newm_river_axis_binding_v1" version="4">
+    <description summary="a pointer axis binding">
+      enable and disable are window management state: they may only be made
+      during a manage sequence and take effect after it.
+    </description>
+
+    <enum name="sources" bitfield="true">
+      <entry name="wheel" value="1" summary="wl_pointer.axis_source.wheel"/>
+      <entry name="finger" value="2" summary="wl_pointer.axis_source.finger"/>
+      <entry name="continuous" value="4" summary="wl_pointer.axis_source.continuous"/>
+      <entry name="wheel_tilt" value="8" summary="wl_pointer.axis_source.wheel_tilt"/>
+    </enum>
+
+    <request name="destroy" type="destructor"/>
+    <request name="enable"/>
+    <request name="disable"/>
+
+    <request name="set_sources" since="2">
+      <description summary="bind only some axis sources">
+        Match only axis events from the given sources: events from other
+        sources go on to the next matching binding, else to the client under
+        the pointer. For example a binding of the wheel source only zooms
+        with Super+wheel while Super+two-finger touchpad scrolling still
+        reaches the application. The default is every source (version 1
+        behaviour); with none the binding matches nothing. This is window
+        management state, like enable.
+      </description>
+      <arg name="sources" type="uint" enum="sources"/>
+    </request>
+
+    <event name="axis">
+      <description summary="bound axis motion">
+        The summed axis motion since the previous axis event: value in the
+        units of wl_pointer.axis, value120 in the units of
+        wl_pointer.axis_value120 (0 for continuous sources), and the source
+        of the latest event.
+      </description>
+      <arg name="source" type="uint" enum="wl_pointer.axis_source"/>
+      <arg name="value" type="fixed"/>
+      <arg name="value120" type="int"/>
+    </event>
+  </interface>
+</protocol>

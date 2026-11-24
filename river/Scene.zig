@@ -111,9 +111,15 @@ pub fn at(scene: *const Scene, lx: f64, ly: f64) ?AtResult {
     };
 
     if (SceneNodeData.fromNode(node)) |scene_node_data| {
+        // newm-river fork: a scaled window gets no pointer, touch or tablet input; the window
+        // manager still learns which window is under the pointer.
+        const scaled = switch (scene_node_data.data) {
+            .window => |window| window.newm.current.scale != 1,
+            else => false,
+        };
         return .{
             .node = node,
-            .surface = surface,
+            .surface = if (scaled) null else surface,
             .sx = sx,
             .sy = sy,
             .data = scene_node_data.data,
