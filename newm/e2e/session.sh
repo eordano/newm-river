@@ -36,7 +36,13 @@ unset WAYLAND_DISPLAY DISPLAY NIRI_SOCKET NEWM_RIVER_SESSION
 pass=0
 river_pid=
 log=
-fail() { echo "FAIL: $*" >&2; [ -n "$log" ] && tail -n 40 "$log" >&2; exit 1; }
+fail() {
+    echo "FAIL: $*" >&2
+    [ -n "$log" ] && tail -n 40 "$log" >&2
+    echo "windows:" >&2
+    "$nrv" msg --json windows 2>/dev/null | jq -c '.[] | {app_id, is_focused, tiles: .layout.tiles}' >&2 || true
+    exit 1
+}
 ok() { pass=$((pass + 1)); echo "ok $pass - $*"; }
 cleanup() {
     [ -n "$river_pid" ] && kill "$river_pid" 2>/dev/null || true
@@ -117,7 +123,8 @@ start() { # name outputs
 }
 
 stop() {
-    msg action quit --skip-confirmation >/dev/null
+    # The window manager may exit before its reply is written; river ending is the check.
+    msg action quit --skip-confirmation >/dev/null 2>&1 || true
     for _ in $(seq 100); do kill -0 "$river_pid" 2>/dev/null || break; sleep 0.1; done
     if kill -0 "$river_pid" 2>/dev/null; then fail "river still runs after quit"; fi
     # A quit ends the window manager cleanly: the supervisor restarts none (supervise.rs).
