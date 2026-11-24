@@ -1,0 +1,38 @@
+--- a/types/wlr_output_management_v1.c	2026-11-19 22:33:30.585832383 +0100
++++ b/types/wlr_output_management_v1.c	2026-11-19 22:33:43.496075012 +0100
+@@ -99,10 +99,14 @@
+ 	}
+ }
+ 
+-static bool head_has_custom_mode_resources(const struct wlr_output_head_v1 *head) {
++// Whether a client holds the virtual mode of a head without a fixed mode. A client that bound
++// while the head was disabled holds none, though others may (newm-river patch).
++static bool head_client_has_custom_mode_resource(const struct wlr_output_head_v1 *head,
++		const struct wl_client *client) {
+ 	struct wl_resource *resource;
+ 	wl_resource_for_each(resource, &head->mode_resources) {
+-		if (wl_resource_get_user_data(resource) == NULL) {
++		if (wl_resource_get_user_data(resource) == NULL &&
++				wl_resource_get_client(resource) == client) {
+ 			return true;
+ 		}
+ 	}
+@@ -932,10 +936,16 @@
+ 		}
+ 	}
+ 
+-	if (next->mode == NULL && next->enabled && !head_has_custom_mode_resources(head)) {
++	if (next->mode == NULL && next->enabled) {
++		// Every client needs the virtual mode before head_send_state names it as the current
++		// mode: one that bound while the head was disabled was sent none (newm-river patch: a
++		// wlr-randr --on of a headless or nested output tripped the assertion there).
+ 		struct wl_resource *resource;
+ 		wl_resource_for_each(resource, &head->resources) {
+-			head_send_mode(head, resource, NULL);
++			if (!head_client_has_custom_mode_resource(head,
++					wl_resource_get_client(resource))) {
++				head_send_mode(head, resource, NULL);
++			}
+ 		}
+ 	} else if (next->mode != NULL) {
+ 		head_destroy_custom_mode_resources(head);

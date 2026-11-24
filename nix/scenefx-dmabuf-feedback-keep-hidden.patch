@@ -1,0 +1,21 @@
+--- a/types/scene/wlr_scene.c
++++ b/types/scene/wlr_scene.c
+@@ -578,7 +578,17 @@
+ 		}
+ 	}
+ 
+-	if (old_primary_output != scene_buffer->primary_output) {
++	// A buffer hidden and shown again on the same output (a disabled tree: river disables a
++	// window's trees around every render sequence and every commit of a scaled or rounded
++	// window) keeps the feedback it was last sent, as in wlroots: forgetting it whenever the
++	// primary output went to NULL and back sent an identical feedback, with a new format table
++	// fd, at every toggle. It is forgotten when the buffer moves straight to another output, or
++	// when the output it was sent for goes away (ignore is the output being destroyed).
++	bool moved = old_primary_output != NULL && scene_buffer->primary_output != NULL &&
++		old_primary_output != scene_buffer->primary_output;
++	bool output_gone = ignore != NULL && (old_primary_output == ignore ||
++		scene_buffer->prev_feedback_options.scanout_primary_output == ignore->output);
++	if (moved || output_gone) {
+ 		scene_buffer->prev_feedback_options =
+ 			(struct wlr_linux_dmabuf_feedback_v1_init_options){0};
+ 	}

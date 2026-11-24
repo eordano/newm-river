@@ -1,0 +1,156 @@
+--- a/types/wlr_linux_dmabuf_v1.c
++++ b/types/wlr_linux_dmabuf_v1.c
+@@ -2,7 +2,9 @@
+ #include <drm_fourcc.h>
+ #include <fcntl.h>
+ #include <stdlib.h>
++#include <string.h>
+ #include <sys/mman.h>
++#include <sys/stat.h>
+ #include <unistd.h>
+ #include <wlr/backend.h>
+ #include <wlr/config.h>
+@@ -506,8 +508,24 @@
+ 	return -1;
+ }
+ 
++static bool feedback_table_matches(const struct wlr_linux_dmabuf_feedback_v1_compiled *compiled,
++		const struct wlr_linux_dmabuf_feedback_v1_table_entry *entries, size_t table_size) {
++	if (compiled->table_size != table_size) {
++		return false;
++	}
++	void *data = mmap(NULL, table_size, PROT_READ, MAP_SHARED, compiled->table_fd, 0);
++	if (data == MAP_FAILED) {
++		return false;
++	}
++	bool match = memcmp(data, entries, table_size) == 0;
++	munmap(data, table_size);
++	return match;
++}
++
++// A table equal to reuse's shares reuse's shm file instead of a new one.
+ static struct wlr_linux_dmabuf_feedback_v1_compiled *feedback_compile(
+-		const struct wlr_linux_dmabuf_feedback_v1 *feedback) {
++		const struct wlr_linux_dmabuf_feedback_v1 *feedback,
++		const struct wlr_linux_dmabuf_feedback_v1_compiled *reuse) {
+ 	const struct wlr_linux_dmabuf_feedback_v1_tranche *tranches = feedback->tranches.data;
+ 	size_t tranches_len = feedback->tranches.size / sizeof(struct wlr_linux_dmabuf_feedback_v1_tranche);
+ 	assert(tranches_len > 0);
+@@ -532,23 +550,11 @@
+ 
+ 	size_t table_size =
+ 		table_len * sizeof(struct wlr_linux_dmabuf_feedback_v1_table_entry);
+-	int rw_fd, ro_fd;
+-	if (!allocate_shm_file_pair(table_size, &rw_fd, &ro_fd)) {
+-		wlr_log(WLR_ERROR, "Failed to allocate shm file for format table");
+-		return NULL;
+-	}
+-
+-	struct wlr_linux_dmabuf_feedback_v1_table_entry *table =
+-		mmap(NULL, table_size, PROT_READ | PROT_WRITE, MAP_SHARED, rw_fd, 0);
+-	if (table == MAP_FAILED) {
+-		wlr_log_errno(WLR_ERROR, "mmap failed");
+-		close(rw_fd);
+-		close(ro_fd);
++	struct wlr_linux_dmabuf_feedback_v1_table_entry *table = calloc(table_len, sizeof(*table));
++	if (table == NULL) {
+ 		goto err_all_formats;
+ 	}
+ 
+-	close(rw_fd);
+-
+ 	size_t n = 0;
+ 	for (size_t i = 0; i < all_formats.len; i++) {
+ 		const struct wlr_drm_format *fmt = &all_formats.formats[i];
+@@ -563,7 +569,30 @@
+ 	}
+ 	assert(n == table_len);
+ 
+-	munmap(table, table_size);
++	int ro_fd = -1;
++	if (reuse != NULL && feedback_table_matches(reuse, table, table_size)) {
++		ro_fd = fcntl(reuse->table_fd, F_DUPFD_CLOEXEC, 0);
++	}
++	if (ro_fd < 0) {
++		int rw_fd;
++		if (!allocate_shm_file_pair(table_size, &rw_fd, &ro_fd)) {
++			wlr_log(WLR_ERROR, "Failed to allocate shm file for format table");
++			free(table);
++			goto err_all_formats;
++		}
++		void *data = mmap(NULL, table_size, PROT_READ | PROT_WRITE, MAP_SHARED, rw_fd, 0);
++		if (data == MAP_FAILED) {
++			wlr_log_errno(WLR_ERROR, "mmap failed");
++			close(rw_fd);
++			close(ro_fd);
++			free(table);
++			goto err_all_formats;
++		}
++		close(rw_fd);
++		memcpy(data, table, table_size);
++		munmap(data, table_size);
++	}
++	free(table);
+ 
+ 	struct wlr_linux_dmabuf_feedback_v1_compiled *compiled = calloc(1, sizeof(*compiled) +
+ 		tranches_len * sizeof(struct wlr_linux_dmabuf_feedback_v1_compiled_tranche));
+@@ -637,6 +666,30 @@
+ 	free(feedback);
+ }
+ 
++static bool compiled_feedback_equal(const struct wlr_linux_dmabuf_feedback_v1_compiled *a,
++		const struct wlr_linux_dmabuf_feedback_v1_compiled *b) {
++	if (a->main_device != b->main_device || a->table_size != b->table_size ||
++			a->tranches_len != b->tranches_len) {
++		return false;
++	}
++	// feedback_compile shares the shm file of an equal table.
++	struct stat sa, sb;
++	if (fstat(a->table_fd, &sa) != 0 || fstat(b->table_fd, &sb) != 0 ||
++			sa.st_dev != sb.st_dev || sa.st_ino != sb.st_ino) {
++		return false;
++	}
++	for (size_t i = 0; i < a->tranches_len; i++) {
++		const struct wlr_linux_dmabuf_feedback_v1_compiled_tranche *ta = &a->tranches[i];
++		const struct wlr_linux_dmabuf_feedback_v1_compiled_tranche *tb = &b->tranches[i];
++		if (ta->target_device != tb->target_device || ta->flags != tb->flags ||
++				ta->indices.size != tb->indices.size ||
++				memcmp(ta->indices.data, tb->indices.data, ta->indices.size) != 0) {
++			return false;
++		}
++	}
++	return true;
++}
++
+ static void feedback_tranche_send(
+ 		const struct wlr_linux_dmabuf_feedback_v1_compiled_tranche *tranche,
+ 		struct wl_resource *resource) {
+@@ -886,7 +939,7 @@
+ 
+ static bool set_default_feedback(struct wlr_linux_dmabuf_v1 *linux_dmabuf,
+ 		const struct wlr_linux_dmabuf_feedback_v1 *feedback) {
+-	struct wlr_linux_dmabuf_feedback_v1_compiled *compiled = feedback_compile(feedback);
++	struct wlr_linux_dmabuf_feedback_v1_compiled *compiled = feedback_compile(feedback, NULL);
+ 	if (compiled == NULL) {
+ 		return false;
+ 	}
+@@ -1023,12 +1076,18 @@
+ 		return false;
+ 	}
+ 
++	// A feedback equal to the one the surface's feedback objects last got is not sent again.
++	const struct wlr_linux_dmabuf_feedback_v1_compiled *current = surface_get_feedback(surface);
+ 	struct wlr_linux_dmabuf_feedback_v1_compiled *compiled = NULL;
+ 	if (feedback != NULL) {
+-		compiled = feedback_compile(feedback);
++		compiled = feedback_compile(feedback, current);
+ 		if (compiled == NULL) {
+ 			return false;
+ 		}
++		if (current != NULL && compiled_feedback_equal(compiled, current)) {
++			compiled_feedback_destroy(compiled);
++			return true;
++		}
+ 	}
+ 
+ 	compiled_feedback_destroy(surface->feedback);
