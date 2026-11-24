@@ -111,7 +111,8 @@ This includes bug reports and comments on the issue tracker.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for an overview of the code base.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for information on submitting patches.
+See [AGENTS.md](AGENTS.md) for how to build and test this repository, and
+[newm/README.md](newm/README.md) for the window manager.
 
 ## Donate
 
