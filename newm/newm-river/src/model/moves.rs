@@ -567,6 +567,24 @@ impl Desktop {
         self.apply(out, |c| c.zoom_by(-c.zoom()));
     }
 
+    /// A Super tap with `super-tap-zoom`: from 1:1 the active output's camera zooms out to the
+    /// whole step nearest `scale`, about the middle of the screen as a zoom step does; from any
+    /// other zoom it returns to 1:1 as [`Self::zoom_reset`] does.
+    pub fn tap_zoom(&mut self, scale: f64) {
+        let out = self.active_canvas_output();
+        let Some(o) = out.and_then(|o| self.output(o)) else {
+            return;
+        };
+        if o.canvas.zoom() != 0 {
+            self.zoom_reset();
+            return;
+        }
+        self.apply(out, |c| {
+            let target = pinch_zoom(0, scale, c.config());
+            c.zoom_by(target - c.zoom())
+        });
+    }
+
     /// A touchpad pinch that zooms began (`crate::pointer::pinch_zooms`): it zooms the active
     /// output's camera, from that camera's zoom at the begin.
     pub fn pinch_begin(&mut self) {

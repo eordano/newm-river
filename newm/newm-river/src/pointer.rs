@@ -212,6 +212,9 @@ pub enum Cmd {
     PinchScale(f64),
     /// The pinch ended; the camera keeps its zoom.
     PinchEnd,
+    /// A Super tap with `super-tap-zoom`: at 1:1 the camera zooms out to the whole step nearest
+    /// this scale; at any other zoom it returns to 1:1.
+    TapZoom(f64),
     /// A pick ended: clicked at this point of the global space, or cancelled.
     Picked(Option<(i32, i32)>),
 }
@@ -551,6 +554,9 @@ pub struct Pointer {
     /// The overview is open: swipes are its gesture there.
     pub overview: bool,
     tap_overview: bool,
+    /// The scale a Super tap zooms out to (`super-tap-zoom`); set, it takes the tap from the
+    /// overview.
+    tap_zoom: Option<f64>,
     binds: Vec<AxisBind>,
     mods: u32,
     /// The pointer is near an edge of the output layout (see [`In::Edge`]).
@@ -579,6 +585,7 @@ impl Pointer {
         Self {
             overview: false,
             tap_overview,
+            tap_zoom: None,
             binds,
             mods: 0,
             edge: false,
@@ -592,6 +599,13 @@ impl Pointer {
             wheel: [Tracker::default(); 2],
             finger: [Tracker::default(); 2],
         }
+    }
+
+    /// A Super tap zooms the camera out to `scale` from 1:1 and back to 1:1 from any other zoom
+    /// (`super-tap-zoom`), in place of the overview.
+    pub fn with_tap_zoom(mut self, scale: Option<f64>) -> Self {
+        self.tap_zoom = scale;
+        self
     }
 
     /// The share of the acceleration a Super pan takes, from 0 (the hand's motion) to 1 (the
@@ -648,9 +662,10 @@ impl Pointer {
         matches!(self.mode, Mode::Armed { .. })
     }
 
-    /// Whether a Super tap toggles the overview (`super-tap-overview`).
-    pub fn tap_overview(&self) -> bool {
-        self.tap_overview
+    /// Whether a Super tap does anything: toggles the overview (`super-tap-overview`) or zooms
+    /// (`super-tap-zoom`).
+    pub fn taps(&self) -> bool {
+        self.tap_overview || self.tap_zoom.is_some()
     }
 
     /// Whether Escape is bound: while a drag, a resize drag or a pick runs.
@@ -984,8 +999,12 @@ impl Pointer {
                 .tap
                 .take()
                 .is_some_and(|t| now.saturating_duration_since(t) <= SUPER_TAP);
-            if tapped && self.tap_overview {
-                out.push(Cmd::Act(Action::ToggleOverview));
+            if tapped {
+                if let Some(scale) = self.tap_zoom {
+                    out.push(Cmd::TapZoom(scale));
+                } else if self.tap_overview {
+                    out.push(Cmd::Act(Action::ToggleOverview));
+                }
             }
         } else {
             self.tap = None;
@@ -1119,6 +1138,19 @@ mod tests {
         let (mut p, now) = pointer();
         let cmds = run(&mut p, now, &[DOWN, UP]);
         assert_eq!(acts(&cmds), vec![Action::ToggleOverview]);
+    }
+
+    #[test]
+    fn with_super_tap_zoom_a_tap_zooms_instead_of_the_overview() {
+        let (p, now) = pointer();
+        let mut p = p.with_tap_zoom(Some(0.33));
+        assert!(p.taps());
+        let cmds = run(&mut p, now, &[DOWN, UP]);
+        assert!(cmds.contains(&Cmd::TapZoom(0.33)), "{cmds:?}");
+        assert!(acts(&cmds).is_empty());
+        let mut p = Pointer::new(false, Vec::new()).with_tap_zoom(Some(0.33));
+        assert!(p.taps());
+        assert!(run(&mut p, now, &[DOWN, UP]).contains(&Cmd::TapZoom(0.33)));
     }
 
     #[test]

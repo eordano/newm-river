@@ -2295,6 +2295,24 @@ mod tests {
     }
 
     #[test]
+    fn a_super_tap_zooms_out_and_the_next_returns_to_one_to_one() {
+        let (mut d, now) = desktop();
+        open(&mut d, 1, (0, 0), now);
+        let zoom = |d: &Desktop| d.output(1).unwrap().canvas.zoom();
+        // 0.5 is 3.1 steps of 0.8.
+        d.tap_zoom(0.5);
+        assert_eq!(zoom(&d), 3);
+        d.tap_zoom(0.5);
+        assert_eq!(zoom(&d), 0);
+        d.act(Action::ZoomIn, now);
+        d.tap_zoom(0.5);
+        assert_eq!(zoom(&d), 0);
+        // Past `zoom-max`, the tap stops at it.
+        d.tap_zoom(0.01);
+        assert_eq!(zoom(&d), d.output(1).unwrap().canvas.config().zoom_max);
+    }
+
+    #[test]
     fn clip_boxes_are_in_the_scaled_windows_own_units() {
         let (mut d, now) = desktop();
         for id in 1..=4 {

@@ -174,7 +174,9 @@ fn template(c: &Config, unaccel: bool) -> Pointer {
     } else {
         1.
     };
-    Pointer::new(c.layout.canvas.super_tap_overview, axis_binds(c)).with_pan_acceleration(share)
+    Pointer::new(c.layout.canvas.super_tap_overview, axis_binds(c))
+        .with_pan_acceleration(share)
+        .with_tap_zoom(c.layout.canvas.super_tap_zoom)
 }
 
 fn bits(m: WEnum<Modifiers>) -> u32 {
@@ -378,7 +380,7 @@ impl SeatInput {
                 };
                 escape.push(x.get_xkb_binding(&self.proxy, XK_ESCAPE, mods, qh, data));
             }
-            if self.pointer.tap_overview() && x.version() >= 2 {
+            if self.pointer.taps() && x.version() >= 2 {
                 for sym in [XK_SUPER_L, XK_SUPER_R] {
                     let data = KeyData {
                         seat: key,
@@ -449,6 +451,7 @@ fn run(
         Cmd::PinchBegin => desktop.pinch_begin(),
         Cmd::PinchScale(scale) => desktop.pinch_scale(scale),
         Cmd::PinchEnd => desktop.pinch_end(),
+        Cmd::TapZoom(scale) => desktop.tap_zoom(scale),
     }
 }
 
