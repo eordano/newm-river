@@ -69,7 +69,7 @@ let
     buildAndTestSubdir = "newm";
     cargoLock = {
       lockFile = newmSrc + "/newm/Cargo.lock";
-      outputHashes."smithay-0.7.0" = "sha256-YD7P5iZAr+0XdeURhq6DkRkFws6Dpn0zSU5Y9qvsyZQ=";
+      outputHashes."smithay-0.7.0" = "sha256-sUyyYEcnTPPXykadHMBBvDvioXGFRxldezBTPI3Nz+s=";
     };
     # pipewire: Spectacle's recording (zkde-screencast) streams through it; libspa-sys runs bindgen.
     nativeBuildInputs = [
